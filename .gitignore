@@ -25,6 +25,9 @@ htmlcov/
 # Generated output - every figure can be regenerated with `python -m hiv_drc`
 figures/
 
+# Notebook checkpoints
+.ipynb_checkpoints/
+
 # Editors and OS
 .vscode/
 .idea/

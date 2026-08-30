@@ -35,5 +35,5 @@ jobs:
         run: pytest -q
 
       - name: Smoke-test the CLI
-        run: python -m hiv_drc --samples 100 --sweep-points 9 --outdir /tmp/figures
+        run: python -m hiv_drc --samples 100 --sweep-points 9 --starts 2 --grid 11 --outdir /tmp/figures
         shell: bash

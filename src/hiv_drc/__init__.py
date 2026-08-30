@@ -16,6 +16,14 @@ Quick start
 >>> solution = simulate(t_span=(0.0, 50.0))
 >>> solution.infected[-1] < solution.infected[0]
 np.True_
+
+Inverse problem
+---------------
+>>> from hiv_drc import generate_observations, estimate_parameters
+>>> observations = generate_observations(noise=0.05, seed=1)
+>>> fit = estimate_parameters(observations, fit=("beta", "alpha"))
+>>> bool(abs(fit.relative_errors()["alpha"]) < 20.0)
+True
 """
 
 from .analysis import BifurcationSweep, bifurcation_sweep, critical_beta, r0_grid
@@ -25,6 +33,16 @@ from .equilibria import (
     dominant_eigenvalue,
     endemic_equilibrium,
     is_locally_stable,
+)
+from .estimation import (
+    PARAMETER_BOUNDS,
+    FitResult,
+    cost_surface,
+    estimate_multistart,
+    estimate_parameters,
+    predict,
+    residuals,
+    weight_vector,
 )
 from .model import force_of_infection, jacobian, rhs, total_population
 from .parameters import (
@@ -48,6 +66,12 @@ from .sensitivity import (
     prcc,
 )
 from .simulation import Solution, simulate
+from .synthetic import (
+    NOISE_MODELS,
+    OBSERVABLE,
+    Observations,
+    generate_observations,
+)
 
 __version__ = "1.0.0"
 
@@ -84,6 +108,20 @@ __all__ = [
     "global_sensitivity",
     "GlobalSensitivity",
     "prcc",
+    # synthetic data
+    "Observations",
+    "generate_observations",
+    "OBSERVABLE",
+    "NOISE_MODELS",
+    # parameter estimation
+    "estimate_parameters",
+    "estimate_multistart",
+    "FitResult",
+    "predict",
+    "residuals",
+    "weight_vector",
+    "cost_surface",
+    "PARAMETER_BOUNDS",
     # sweeps
     "r0_grid",
     "critical_beta",

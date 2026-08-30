@@ -17,10 +17,12 @@ import numpy as np
 from matplotlib.figure import Figure
 
 from .equilibria import Equilibrium
+from .estimation import FitResult
 from .parameters import COMPARTMENT_LABELS, Parameters
 from .reproduction import reproduction_number
 from .sensitivity import GlobalSensitivity
 from .simulation import Solution
+from .synthetic import Observations
 
 __all__ = [
     "plot_population_dynamics",
@@ -29,6 +31,8 @@ __all__ = [
     "plot_local_sensitivity",
     "plot_global_sensitivity",
     "plot_bifurcation",
+    "plot_fit",
+    "plot_cost_surface",
     "save_all",
 ]
 
@@ -292,6 +296,249 @@ def plot_bifurcation(
     _style(ax, "Dominant eigenvalue", "R0", "max Re(lambda)")
     ax.legend(frameon=False)
 
+    fig.tight_layout()
+    return fig
+
+
+def plot_fit(obs: Observations, result: FitResult) -> Figure:
+    """The inverse-problem figure: noisy data, recovered curve, and the error.
+
+    Top row is one panel per observed compartment - the scatter is what the
+    estimator was given, the solid curve is the model at the recovered
+    parameters, and the dashed curve is the trajectory the data were generated
+    from.  The two curves lying on top of each other while the scatter jumps
+    around them is the whole point: the fit recovers the signal, not the noise.
+
+    Bottom left is the residuals, which are the real diagnostic.  Noise-shaped
+    scatter around zero means the model has extracted what there was to
+    extract; visible curvature or drift means it has not, and no amount of
+    optimiser tuning will fix a structural mismatch.
+
+    Bottom right compares each estimate against its true value on a common
+    axis, scaled by the truth so that parameters of different magnitude are
+    legible together.  Bars are 95% confidence intervals.
+    """
+    names = obs.names
+    fitted = result.names
+    k = len(names)
+
+    fig = plt.figure(figsize=(6.6 * k, 9.0))
+    grid = fig.add_gridspec(2, 2 * k, hspace=0.32, wspace=0.55)
+
+    noise_note = (
+        f"{100 * obs.noise:.0f}% {obs.noise_model} noise" if obs.noise else "noise-free"
+    )
+    fig.suptitle(
+        f"Parameter recovery from noisy observations - fitting "
+        f"{', '.join(fitted)} to {k * obs.n_points} points ({noise_note})",
+        fontsize=14,
+    )
+
+    # -- top row: one observed compartment per panel ------------------------
+    for j, name in enumerate(names):
+        ax = fig.add_subplot(grid[0, 2 * j : 2 * j + 2])
+        ax.plot(
+            obs.t,
+            obs.values[name],
+            "o",
+            ms=5.5,
+            color="0.25",
+            alpha=0.7,
+            label="observed (noisy)",
+            zorder=3,
+        )
+        ax.plot(
+            result.solution.t,
+            result.solution[name],
+            lw=2.4,
+            color="crimson",
+            label="fitted model",
+            zorder=2,
+        )
+        if obs.truth is not None:
+            ax.plot(
+                obs.t,
+                obs.truth[name],
+                "--",
+                lw=1.8,
+                color="tab:blue",
+                label="ground truth",
+                zorder=1,
+            )
+        _style(
+            ax,
+            COMPARTMENT_LABELS.get(name, name),
+            "time (years)",
+            "population (millions)",
+        )
+        ax.legend(frameon=False, fontsize=9)
+
+    # -- bottom left: residuals --------------------------------------------
+    ax = fig.add_subplot(grid[1, 0:k])
+    modelled = {
+        name: np.interp(obs.t, result.solution.t, result.solution[name])
+        for name in names
+    }
+    for name in names:
+        ax.plot(
+            obs.t,
+            modelled[name] - obs.values[name],
+            "o-",
+            ms=4,
+            lw=1.0,
+            alpha=0.8,
+            label=f"{name}  (RMSE {result.rmse[name]:.5f})",
+        )
+    ax.axhline(0, color="black", lw=1)
+    _style(ax, "Residuals: fitted - observed", "time (years)", "millions of people")
+    ax.legend(frameon=False, fontsize=9)
+
+    # -- bottom right: estimate against truth ------------------------------
+    ax = fig.add_subplot(grid[1, k : 2 * k])
+    known = result.truth is not None
+    positions = np.arange(len(fitted))
+    centres, errors, labels = [], [], []
+    for name in fitted:
+        reference = result.truth[name] if known else result.estimates[name]
+        lo, hi = result.ci95[name]
+        centres.append(result.estimates[name] / reference)
+        errors.append(
+            [
+                (result.estimates[name] - lo) / reference,
+                (hi - result.estimates[name]) / reference,
+            ]
+        )
+        labels.append(name)
+
+    ax.errorbar(
+        centres,
+        positions,
+        xerr=np.array(errors).T,
+        fmt="o",
+        ms=10,
+        color="crimson",
+        ecolor="crimson",
+        elinewidth=2,
+        capsize=6,
+        label="estimate with 95% CI",
+        zorder=3,
+    )
+    ax.axvline(
+        1.0,
+        color="tab:blue",
+        ls="--",
+        lw=2,
+        label="true value" if known else "point estimate",
+    )
+    ax.set_yticks(positions, labels)
+    ax.set_ylim(-0.6, len(fitted) - 0.15)
+    _style(ax, "Recovered against true parameters", "estimate / true value", "")
+    ax.legend(frameon=False, fontsize=9, loc="lower right")
+
+    if known:
+        relative = result.relative_errors()
+        for position, name in zip(positions, fitted, strict=True):
+            ax.annotate(
+                f"{name}: {result.estimates[name]:.5f} vs {result.truth[name]:.5f}"
+                f"   ({relative[name]:+.2f}%)",
+                xy=(1.0, position),
+                xytext=(0, 20),
+                textcoords="offset points",
+                ha="center",
+                fontsize=10,
+                fontweight="bold",
+                bbox={"boxstyle": "round,pad=0.3", "fc": "white", "ec": "none",
+                      "alpha": 0.85},
+            )
+        summary = "   ".join(
+            f"{name}: {relative[name]:+.2f}%" for name in fitted
+        )
+        fig.text(
+            0.5,
+            0.945,
+            f"relative error   {summary}        R0 recovered: {result.R0:.4f}",
+            ha="center",
+            fontsize=11,
+            color="crimson",
+        )
+
+    return fig
+
+
+def plot_cost_surface(
+    x: np.ndarray,
+    y: np.ndarray,
+    cost: np.ndarray,
+    result: FitResult,
+    names: tuple[str, str] = ("beta", "alpha"),
+) -> Figure:
+    """The objective over a 2-D slice, with the truth and the estimate marked.
+
+    Plotted on a log colour scale, because the cost varies by orders of
+    magnitude across the box while the region that matters - the floor of the
+    valley - is nearly flat.  The shape of the contours near the minimum is
+    the identifiability diagnostic: concentric circles mean both parameters
+    are determined, a long thin valley means only a combination of them is,
+    and the tilt of that valley is the correlation reported by the fit.
+    """
+    fig, ax = plt.subplots(figsize=(8.8, 6.4))
+
+    levels = np.linspace(np.log10(cost.min()), np.log10(cost.max()), 30)
+    filled = ax.contourf(x, y, np.log10(cost), levels=levels, cmap="viridis")
+    fig.colorbar(filled, ax=ax, label="log10 weighted sum of squares")
+    ax.contour(x, y, np.log10(cost), levels=levels[:12], colors="white",
+               linewidths=0.6, alpha=0.5)
+
+    if result.truth is not None:
+        ax.plot(
+            result.truth[names[0]],
+            result.truth[names[1]],
+            "*",
+            ms=20,
+            color="red",
+            mec="white",
+            mew=1.2,
+            label="true parameters",
+            zorder=5,
+        )
+    ax.plot(
+        result.estimates[names[0]],
+        result.estimates[names[1]],
+        "X",
+        ms=14,
+        color="white",
+        mec="black",
+        mew=1.4,
+        label="least-squares estimate",
+        zorder=5,
+    )
+
+    lo_x, hi_x = result.ci95[names[0]]
+    lo_y, hi_y = result.ci95[names[1]]
+    ax.add_patch(
+        plt.Rectangle(
+            (lo_x, lo_y),
+            hi_x - lo_x,
+            hi_y - lo_y,
+            fill=False,
+            ec="white",
+            ls="--",
+            lw=1.6,
+            label="95% confidence box",
+            zorder=4,
+        )
+    )
+
+    _style(
+        ax,
+        f"Objective landscape over ({names[0]}, {names[1]})   "
+        f"corr = {result.correlation[0, 1]:+.3f}",
+        names[0],
+        names[1],
+    )
+    ax.set_xlim(x.min(), x.max())
+    ax.set_ylim(y.min(), y.max())
+    ax.legend(frameon=False, labelcolor="white", loc="upper right")
     fig.tight_layout()
     return fig
 

@@ -71,6 +71,7 @@ def simulate(
     method: str = "LSODA",
     rtol: float = 1e-10,
     atol: float = 1e-12,
+    t_eval: ArrayLike | None = None,
 ) -> Solution:
     """Integrate the model and return a :class:`Solution`.
 
@@ -83,7 +84,13 @@ def simulate(
     t_span:
         ``(t_start, t_end)`` in years.
     n_points:
-        How many evenly spaced output times to record.
+        How many evenly spaced output times to record.  Ignored when
+        ``t_eval`` is given.
+    t_eval:
+        Explicit output times, overriding the even grid.  Parameter estimation
+        needs the solution exactly at the observation times, and asking the
+        solver for them directly is both cheaper and more accurate than
+        interpolating off a dense grid.
     method, rtol, atol:
         Passed straight through to ``scipy.integrate.solve_ivp``.  The default
         tolerances are tight because several downstream analyses (equilibria,
@@ -99,8 +106,11 @@ def simulate(
     >>> sol = simulate(t_span=(0.0, 10.0), n_points=11)
     >>> sol["S"].shape
     (11,)
+    >>> simulate(t_span=(0.0, 10.0), t_eval=[0.0, 2.5, 10.0]).t
+    array([ 0. ,  2.5, 10. ])
     """
-    t_eval = np.linspace(t_span[0], t_span[1], n_points)
+    if t_eval is None:
+        t_eval = np.linspace(t_span[0], t_span[1], n_points)
     result = solve_ivp(
         rhs,
         t_span,

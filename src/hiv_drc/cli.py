@@ -16,12 +16,14 @@ import numpy as np
 
 from . import analysis, plotting
 from .equilibria import disease_free_equilibrium, endemic_equilibrium
+from .estimation import PARAMETER_BOUNDS, cost_surface, estimate_multistart
 from .parameters import DRC_2020, INITIAL_STATE, Parameters
 from .reproduction import next_generation_matrices, r0_from_ngm, reproduction_number
 from .sensitivity import global_sensitivity, local_sensitivity_indices
 from .simulation import simulate
+from .synthetic import generate_observations
 
-STAGES = ("dynamics", "r0", "stability", "sensitivity")
+STAGES = ("dynamics", "r0", "stability", "sensitivity", "estimate")
 
 
 def _rule(title: str) -> None:
@@ -167,6 +169,80 @@ def run_sensitivity(args) -> list[tuple[str, object]]:
     ]
 
 
+def run_estimate(args) -> list[tuple[str, object]]:
+    _rule("INVERSE PROBLEM - PARAMETER ESTIMATION")
+
+    truth = DRC_2020
+    fit_names = tuple(args.fit)
+    observations = generate_observations(
+        truth,
+        INITIAL_STATE,
+        t_span=(0.0, args.obs_years),
+        n_points=args.obs_points,
+        noise=args.noise,
+        noise_model=args.noise_model,
+        seed=args.seed,
+    )
+    print(f"generated {observations.n_points} annual observations of "
+          f"{' and '.join(observations.names)} over {args.obs_years:g} years")
+    print(f"  measurement error: {100 * args.noise:.0f}% {args.noise_model}, "
+          f"seed {args.seed}")
+    print("  true values: " + "   ".join(
+        f"{name} = {getattr(truth, name):g}" for name in fit_names))
+
+    if args.data is not None:
+        path = observations.to_csv(args.data)
+        print(f"  written to {path}")
+
+    print(f"\nfitting {', '.join(fit_names)} from {args.starts} starting "
+          f"point(s), everything else held at the published values ...")
+    result = estimate_multistart(
+        observations,
+        fit=fit_names,
+        n_starts=args.starts,
+        seed=args.seed,
+        weights=args.weights,
+    )
+    print(result.summary())
+
+    spread = {
+        name: max(estimates[name] for estimates in result.starts)
+        - min(estimates[name] for estimates in result.starts)
+        for name in fit_names
+    }
+    print("\n  spread across starts: " + "   ".join(
+        f"{name} {value:.2e}" for name, value in spread.items()))
+    print(f"  95% intervals cover the truth: {result.covers_truth()}")
+
+    figures = [("07_parameter_fit", plotting.plot_fit(observations, result))]
+
+    if len(fit_names) == 2:
+        print(f"\nmapping the objective over a {args.grid}x{args.grid} grid ...")
+        # Span whatever the confidence box needs, so it is never clipped by
+        # the edge of the grid - a wide box is a finding, not a plotting bug.
+        grids = [
+            np.linspace(
+                max(PARAMETER_BOUNDS[name][0], 0.8 * min(result.ci95[name][0],
+                                                         getattr(truth, name))),
+                min(PARAMETER_BOUNDS[name][1], 1.15 * max(result.ci95[name][1],
+                                                          getattr(truth, name))),
+                args.grid,
+            )
+            for name in fit_names
+        ]
+        x, y, cost = cost_surface(
+            observations, names=fit_names, grids=grids, weights=args.weights
+        )
+        print(f"  cost at the estimate: {result.cost:.6e}   "
+              f"grid minimum: {cost.min():.6e}")
+        figures.append(
+            ("08_cost_surface", plotting.plot_cost_surface(x, y, cost, result, fit_names))
+        )
+
+    return figures
+
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m hiv_drc",
@@ -191,6 +267,28 @@ def build_parser() -> argparse.ArgumentParser:
                         help="relative half-width of the LHS sampling band")
     parser.add_argument("--sweep-points", type=int, default=41,
                         help="points in the bifurcation sweep")
+
+    group = parser.add_argument_group("parameter estimation")
+    group.add_argument("--fit", nargs="+", default=["beta", "alpha"],
+                       metavar="PARAM", help="which parameters to recover")
+    group.add_argument("--noise", type=float, default=0.05,
+                       help="relative measurement noise on the synthetic data")
+    group.add_argument("--noise-model", choices=("proportional", "constant"),
+                       default="proportional", help="measurement-error model")
+    group.add_argument("--obs-years", type=float, default=30.0,
+                       help="length of the observation window")
+    group.add_argument("--obs-points", type=int, default=31,
+                       help="number of observations")
+    group.add_argument("--seed", type=int, default=20260830,
+                       help="seed for the noise and the multi-start draws")
+    group.add_argument("--starts", type=int, default=8,
+                       help="multi-start restarts for the optimiser")
+    group.add_argument("--weights", choices=("scale", "sigma", "none"),
+                       default="scale", help="residual weighting")
+    group.add_argument("--grid", type=int, default=41,
+                       help="resolution of the cost-surface grid")
+    group.add_argument("--data", type=Path, default=None,
+                       help="write the synthetic observations to this CSV")
     parser.add_argument("--show", action="store_true",
                         help="open the figures instead of only saving them")
     parser.add_argument("--no-save", action="store_true",
@@ -215,6 +313,7 @@ def main(argv: list[str] | None = None) -> int:
         "r0": run_r0,
         "stability": run_stability,
         "sensitivity": run_sensitivity,
+        "estimate": run_estimate,
     }
 
     started = time.perf_counter()

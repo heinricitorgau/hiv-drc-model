@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hiv-drc-model"
 version = "1.0.0"
-description = "HIV/AIDS transmission dynamics with treatment: a reproduction of the DRC model of Mbayi, Mpompi and Munyakazi (2026)"
+description = "HIV/AIDS transmission dynamics with treatment: a reproduction of the DRC model of Mbayi, Mpompi and Munyakazi (2026), with ODE parameter estimation from noisy data"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -16,6 +16,9 @@ keywords = [
     "basic-reproduction-number",
     "dynamical-systems",
     "sensitivity-analysis",
+    "inverse-problem",
+    "parameter-estimation",
+    "least-squares",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
