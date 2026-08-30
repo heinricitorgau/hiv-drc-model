@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hiv-drc-model"
+version = "1.0.0"
+description = "HIV/AIDS transmission dynamics with treatment: a reproduction of the DRC model of Mbayi, Mpompi and Munyakazi (2026)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = [
+    "epidemiology",
+    "compartmental-model",
+    "HIV",
+    "basic-reproduction-number",
+    "dynamical-systems",
+    "sensitivity-analysis",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+hiv-drc = "hiv_drc.cli:main"
+
+[project.urls]
+Paper = "https://doi.org/10.5556/j.tkjm.57.5817.2026"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "src"]
+addopts = "--doctest-modules --strict-markers"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "NPY"]
+
+[tool.ruff.lint.per-file-ignores]
+# SIM300 wants `pytest.approx(expected) == actual`, which inverts the order
+# every pytest user reads these assertions in.  Keep actual on the left.
+"tests/**" = ["SIM300"]
