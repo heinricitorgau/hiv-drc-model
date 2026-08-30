@@ -44,6 +44,9 @@ dev = [
 hiv-drc = "hiv_drc.cli:main"
 
 [project.urls]
+Homepage = "https://github.com/heinricitorgau/hiv-drc-model"
+Repository = "https://github.com/heinricitorgau/hiv-drc-model"
+Issues = "https://github.com/heinricitorgau/hiv-drc-model/issues"
 Paper = "https://doi.org/10.5556/j.tkjm.57.5817.2026"
 
 [tool.setuptools.packages.find]

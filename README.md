@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-41%20passing-brightgreen)](tests/)
+[![Tests](https://github.com/heinricitorgau/hiv-drc-model/actions/workflows/ci.yml/badge.svg)](https://github.com/heinricitorgau/hiv-drc-model/actions/workflows/ci.yml)
 [![Paper](https://img.shields.io/badge/DOI-10.5556%2Fj.tkjm.57.5817.2026-orange)](https://doi.org/10.5556/j.tkjm.57.5817.2026)
 
 A complete, tested reproduction of the six-compartment HIV/AIDS treatment model of
@@ -135,7 +135,7 @@ algebra would propagate silently into every figure in the repository.
 Requires Python 3.10 or newer.
 
 ```bash
-git clone https://github.com/<your-username>/hiv-drc-model.git
+git clone https://github.com/heinricitorgau/hiv-drc-model.git
 cd hiv-drc-model
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
