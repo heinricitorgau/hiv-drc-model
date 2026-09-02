@@ -76,6 +76,14 @@ from .parameters import (
     R0_PARAMETERS,
     Parameters,
 )
+from .priors import (
+    SCALEUP_PRIORS,
+    LogNormal,
+    Normal,
+    Prior,
+    Uniform,
+    contraction,
+)
 from .realdata import (
     PAPER_UNTREATED_SPLIT,
     initial_state_from_data,
@@ -143,6 +151,13 @@ __all__ = [
     "Observable",
     "resolve",
     "apply",
+    # priors and the contraction diagnostic
+    "Prior",
+    "Normal",
+    "LogNormal",
+    "Uniform",
+    "SCALEUP_PRIORS",
+    "contraction",
     # real surveillance data
     "load_worldbank",
     "initial_state_from_data",

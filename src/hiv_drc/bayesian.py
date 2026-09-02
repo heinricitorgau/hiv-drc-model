@@ -49,7 +49,7 @@ publication-grade run.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import emcee
 import numpy as np
@@ -57,6 +57,7 @@ from numpy.typing import ArrayLike, NDArray
 
 from .estimation import PARAMETER_BOUNDS, FitResult, estimate_parameters, predict
 from .parameters import DRC_2020, INITIAL_STATE, Parameters
+from .priors import Prior, log_density
 from .reproduction import reproduction_number, reproduction_number_at
 from .simulation import Solution, simulate
 from .synthetic import Observations
@@ -107,8 +108,15 @@ def log_prior(
     obs: Observations,
     bounds: Mapping[str, tuple[float, float]] | None = None,
     eta_bounds: tuple[float, float] = ETA_BOUNDS,
+    priors: Mapping[str, Prior] | None = None,
 ) -> float:
     """Log prior density: uniform on the rates, log-uniform on the noise levels.
+
+    ``priors`` adds an informative density on top of the box for any named
+    parameter; anything without one keeps the uniform default.  See
+    :mod:`hiv_drc.priors`, and read
+    :func:`~hiv_drc.priors.contraction` before trusting an interval that came
+    out of one.
 
     Returns ``-inf`` outside the box.  Inside it, the density is a constant -
     included explicitly (rather than dropped as irrelevant to sampling) so
@@ -144,7 +152,10 @@ def log_prior(
 
     fit_density = -sum(np.log(box[name][1] - box[name][0]) for name in names)
     eta_density = -log_eta.size * np.log(hi_eta - lo_eta)
-    return float(fit_density + eta_density)
+    informative = log_density(dict(zip(names, fit_part, strict=True)), priors)
+    if not np.isfinite(informative):
+        return -np.inf
+    return float(fit_density + eta_density + informative)
 
 
 def log_likelihood(
@@ -202,13 +213,14 @@ def log_posterior(
     eta_bounds: tuple[float, float] = ETA_BOUNDS,
     rtol: float = 1e-6,
     atol: float = 1e-8,
+    priors: Mapping[str, Prior] | None = None,
 ) -> float:
     """``log_prior + log_likelihood``, skipping the integration when the prior forbids it.
 
     This is the callable handed to ``emcee.EnsembleSampler`` - its positional
     signature after ``theta`` is passed straight through via ``args=``.
     """
-    lp = log_prior(theta, names, obs, bounds, eta_bounds)
+    lp = log_prior(theta, names, obs, bounds, eta_bounds, priors)
     if not np.isfinite(lp):
         return -np.inf
     return lp + log_likelihood(theta, names, obs, baseline, y0, rtol, atol)
@@ -318,6 +330,8 @@ class BayesianFitResult:
     n_steps: int
     burn: int
     truth: dict[str, float] | None = None
+    priors: Mapping[str, Prior] | None = field(default=None, repr=False)
+    """The informative priors used, kept so contraction can be computed after the fact."""
 
     @property
     def all_names(self) -> tuple[str, ...]:
@@ -444,6 +458,7 @@ def run_mcmc(
     rtol: float = 1e-6,
     atol: float = 1e-8,
     progress: bool = False,
+    priors: Mapping[str, Prior] | None = None,
 ) -> BayesianFitResult:
     """Sample the posterior of ``fit`` given ``obs`` with an ensemble MCMC sampler.
 
@@ -474,6 +489,11 @@ def run_mcmc(
         than a few dozen; see the module docstring for the cost this buys back.
     progress:
         Show emcee's progress bar (needs ``tqdm``).
+    priors:
+        Informative priors per parameter; see :mod:`hiv_drc.priors`.  Anything
+        unnamed keeps the uniform default.  Whenever these are used, report
+        :func:`~hiv_drc.priors.contraction` alongside the intervals - a tight
+        posterior under a tight prior is not evidence of anything.
 
     Returns
     -------
@@ -536,7 +556,7 @@ def run_mcmc(
         n_walkers,
         ndim,
         log_posterior,
-        args=(names, obs, baseline, y0, box, eta_bounds, rtol, atol),
+        args=(names, obs, baseline, y0, box, eta_bounds, rtol, atol, priors),
     )
     seed_state = np.random.RandomState(int(rng.integers(0, 2**31 - 1)))
     sampler.random_state = seed_state.get_state()
@@ -601,4 +621,5 @@ def run_mcmc(
         n_steps=n_steps,
         burn=burn,
         truth=truth,
+        priors=priors,
     )

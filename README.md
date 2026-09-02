@@ -46,7 +46,10 @@ produced them.
   treatment scale-up, and the published initial conditions disagree with the published data.
 - **Time-varying rates** for the treatment and diagnosis programmes, with the constant-coefficient
   theory refusing to answer rather than misleading once they are switched on.
-- **198 tests**, no test comparing the code to itself.
+- **Informative priors with a contraction diagnostic**, because a tight prior always
+  produces a tight posterior; the fit reports how much of each interval the data
+  actually earned, and three of the nine scale-up parameters turn out to be prior echoes.
+- **220 tests**, no test comparing the code to itself.
 
 ---
 
@@ -62,6 +65,7 @@ produced them.
 - [What can actually be observed](#what-can-actually-be-observed)
 - [Meeting real data](#meeting-real-data)
 - [Time-varying rates](#time-varying-rates)
+- [Informative priors](#informative-priors-and-whether-they-earned-it)
 - [Bayesian uncertainty](#bayesian-uncertainty)
 - [Testing and verification](#testing-and-verification)
 - [Project structure](#project-structure)
@@ -762,8 +766,80 @@ So the complete answer, which is not the one this section set out to find:
 
 Getting identified parameters out of this needs *more information*, not more flexibility:
 more observed series (the [observability study](#which-data-is-worth-collecting) says which
-ones carry which signal), or informative priors on the rates — which is what the Bayesian
-layer below exists for.
+ones carry which signal), or informative priors on the rates — which is the next section.
+
+---
+
+## Informative priors, and whether they earned it
+
+Informative priors are the standard remedy for a model the data cannot separate. They are
+also the standard way to fool yourself: **a tight enough prior always produces a tight
+posterior**, whether or not the data agreed with it, and the result is indistinguishable from
+a well-identified fit if you only look at the credible intervals.
+
+The number that tells them apart is the prior-to-posterior contraction,
+
+$$\text{contraction} = 1 - \frac{\operatorname{sd}(\text{posterior})}{\operatorname{sd}(\text{prior})}$$
+
+Near 1 the data determined the parameter; near 0 the posterior is the prior repeated back;
+negative means the data pulled against the prior hard enough to widen the answer.
+`hiv_drc.priors` provides `Normal`, `LogNormal` and `Uniform`, and `contraction()` measures
+this against the *truncated* prior — bounds narrow the prior too, and crediting the data for
+the clipping would be exactly the error this diagnostic exists to catch.
+
+Every shipped prior in `SCALEUP_PRIORS` carries a `why` string justifying it from outside the
+DRC series being fitted, and none was adjusted after seeing a fit:
+
+| Parameter | Prior | Justification |
+| --- | --- | --- |
+| $\beta$ | LogNormal(0.15, 0.7) | the published value, to within a factor of two |
+| `lam_ceiling` | LogNormal(0.35, 0.7) | a mature testing programme diagnoses in ~3 years, not 667 |
+| `alpha_ceiling` | LogNormal(4.0, 0.8) | under treat-all, initiation follows diagnosis in months |
+| `*_midpoint` | Normal(11, 3) | WHO's 2016 treat-all guidance, 11 years into a 2005 window |
+| `*_rate` | LogNormal(0.9, 0.6) | a national roll-out spans roughly five years |
+
+### The result: partial identification
+
+32 walkers × 20,000 steps ([`scripts/prior_contraction.py`](scripts/prior_contraction.py)):
+
+| Parameter | Posterior median | Contraction | Verdict |
+| --- | --- | --- | --- |
+| $\beta$ | 0.581 | 0.76 | data determined it — **but see the caveat** |
+| `lam_ceiling` | 0.218 | 0.73 | data determined it |
+| `alpha_ceiling` | 2.04 | 0.30 | data helped |
+| `alpha_midpoint` | 14.9 | 0.24 | data helped |
+| `alpha_rate` | 1.11 | −0.03 | prior echo |
+| `lam_midpoint` | 12.0 | −0.28 | prior echo |
+| `lam_rate` | 0.95 | −0.06 | prior echo |
+
+So the priors bought **partial** identification, and the split is interpretable: the
+**levels** of the scale-ups (where they end up) are partly recoverable, while their
+**shapes** — how fast they ramp, and when the testing ramp happened — are not. Twenty annual
+points of two series constrain where the programme got to, not the path it took.
+
+### Two caveats that matter more than the table
+
+**$\beta$ is clipped by its own box.** Its 95% interval runs to 0.599 against an upper bound of
+0.6. The data are pushing $\beta$ against the wall — well above the published 0.15 and above
+the prior's median — so its contraction of 0.76 partly measures the box, not the evidence.
+A wider box would widen the posterior; the number is not the clean win it looks like.
+
+**The chains are still not converged.** Worst split-$\hat R$ is 1.69 (`lam`), against the
+conventional 1.1, and the autocorrelation time is 390–880 steps, so emcee's 50-$\tau$ rule
+wants around 44,000 kept steps against the 14,000 here. ESS reports `None` throughout, as it
+should.
+
+That second caveat is not decoration. An earlier version of this study ran 3,000 steps and
+reported `lam_ceiling` contraction of **0.21** — "data barely helped". The longer run puts it
+at **0.73** — "data determined it". The estimate of $\beta$ moved from 0.408 to 0.581, and
+`lam` from $6\times10^{-6}$ to 0.31. **The short run was not merely imprecise, it was
+wrong**, and it would have supported the opposite conclusion. Anyone reading a contraction
+table should check $\hat R$ first.
+
+(Finding that took an embarrassing detour: the first "longer" run silently reproduced the
+short one, because a patch adding a command-line budget override never actually matched the
+file it was meant to edit. Identical results across two supposedly different runs is a
+symptom worth taking seriously rather than explaining away.)
 
 ---
 
@@ -883,7 +959,7 @@ exact ratios are not.
 pytest
 ```
 
-198 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
+220 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
 MCMC chains and add roughly one to three minutes depending on the machine — there is no way to
 test a sampler's convergence diagnostics without actually sampling. The design principle
 throughout is that **no test compares the code to itself** — each one checks against an
@@ -898,6 +974,8 @@ independent derivation or a property that must hold mathematically:
 | Threshold theorem | Sign of the dominant eigenvalue against sign of $R_0 - 1$, swept across the threshold |
 | Time-varying rates | That the constant path is bit-identical, that the ramp is monotonic from floor to ceiling, and that $R_0$ refuses rather than misleads |
 | The structural ceiling | That a hundredfold rise in $lpha$ moves ART coverage by under 2 points while $\lambda$ is held at its published value |
+| Prior densities | Numerical integration to one, and a log-normal's median and log-spread against its own samples |
+| The contraction diagnostic | Two constructed posteriors with known answers: one that *is* the prior (0), one ten times sharper (0.9) |
 | Trajectories | The population balance $dN/dt = \Lambda - \mu N - \delta_1 A - \delta_2 T$, and the invariant region $N \le \Lambda/\mu$ |
 | Sensitivity indices | The exact values $+1$ for $\beta$ and $-\phi/(\mu+\phi)$ for $\phi$ |
 | PRCC implementation | A synthetic problem with a known monotone answer |
@@ -939,13 +1017,14 @@ hiv-drc-model/
 │   ├── sensitivity.py       Local indices, Latin hypercube sampling, PRCC
 │   ├── analysis.py          Parameter sweeps: R0 grid, bifurcation, threshold
 │   ├── observables.py       What surveillance reports, as functions of the state
+│   ├── priors.py            Informative priors and the contraction diagnostic
 │   ├── realdata.py          Loading UNAIDS/World Bank series; initial state from data
 │   ├── synthetic.py         Mock data: forward model + Gaussian measurement error
 │   ├── estimation.py        The inverse problem: bounded nonlinear least squares
 │   ├── bayesian.py          The same inverse problem, solved by MCMC (emcee)
 │   ├── plotting.py          Figures (no computation lives here)
 │   └── cli.py               Command-line interface
-├── tests/                   183 tests (198 with doctests)
+├── tests/                   204 tests (220 with doctests)
 │   ├── conftest.py          Shared fixtures
 │   ├── test_model.py        ODE right-hand side and Jacobian
 │   ├── test_simulation.py   Integration, conservation, solver agreement
@@ -955,6 +1034,7 @@ hiv-drc-model/
 │   ├── test_observables.py  Operators, checked against identities between them
 │   ├── test_realdata.py     Units, gaps, and the Table 2 discrepancy
 │   ├── test_scaleup.py      Time-varying rates, and the structural ceiling
+│   ├── test_priors.py       Densities, and contraction on cases with known answers
 │   ├── test_synthetic.py    The data generator
 │   ├── test_estimation.py   Recovery, bounds, uncertainty, identifiability
 │   └── test_bayesian.py     Priors, likelihood, split-R-hat, MCMC recovery
@@ -965,7 +1045,8 @@ hiv-drc-model/
 │   ├── observability_study.py  Which observation sets identify the rates
 │   ├── fetch_worldbank.py   Downloads the DRC indicators (the only network access)
 │   ├── realdata_fit.py      Fitting the real series, window by window
-│   └── scaleup_fit.py       Constant vs alpha(t) vs alpha(t)+lambda(t)
+│   ├── scaleup_fit.py       Constant vs alpha(t) vs alpha(t)+lambda(t)
+│   └── prior_contraction.py  Whether informative priors earned their intervals
 ├── data/
 │   ├── README.md            Provenance and column definitions
 │   ├── real/                UNAIDS/World Bank snapshot for the DRC
