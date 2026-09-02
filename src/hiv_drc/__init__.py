@@ -76,6 +76,11 @@ from .parameters import (
     R0_PARAMETERS,
     Parameters,
 )
+from .realdata import (
+    PAPER_UNTREATED_SPLIT,
+    initial_state_from_data,
+    load_worldbank,
+)
 from .reproduction import (
     ReproductionNumber,
     next_generation_matrices,
@@ -138,6 +143,10 @@ __all__ = [
     "Observable",
     "resolve",
     "apply",
+    # real surveillance data
+    "load_worldbank",
+    "initial_state_from_data",
+    "PAPER_UNTREATED_SPLIT",
     # synthetic data
     "Observations",
     "generate_observations",

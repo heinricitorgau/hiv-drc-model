@@ -41,7 +41,10 @@ produced them.
 - **Observation operators** mapping model state to what surveillance actually publishes
   (people living with HIV, ART coverage), because no health system reports "people currently
   in the symptomatic compartment" — with a measured answer to which data is worth collecting.
-- **157 tests**, no test comparing the code to itself.
+- **Real-data ingestion** from the UNAIDS/World Bank estimates, and an honest report of
+  what happens when the published model meets them: it cannot be calibrated across the
+  treatment scale-up, and the published initial conditions disagree with the published data.
+- **178 tests**, no test comparing the code to itself.
 
 ---
 
@@ -55,6 +58,7 @@ produced them.
 - [Results](#results)
 - [The inverse problem](#the-inverse-problem)
 - [What can actually be observed](#what-can-actually-be-observed)
+- [Meeting real data](#meeting-real-data)
 - [Bayesian uncertainty](#bayesian-uncertainty)
 - [Testing and verification](#testing-and-verification)
 - [Project structure](#project-structure)
@@ -598,6 +602,83 @@ For anyone pointing this at real data: collect PLHIV and ART numbers, and do not
 
 ---
 
+## Meeting real data
+
+With observation operators in place, the model can be pointed at the actual UNAIDS estimates
+for the DRC. `scripts/fetch_worldbank.py` pulls them from the World Bank's unauthenticated
+republication of the UNAIDS country figures (AIDSinfo itself is a single-page app with no
+machine-readable route), and `hiv_drc.realdata` loads the committed snapshot:
+
+```python
+from hiv_drc import estimate_parameters, load_worldbank, initial_state_from_data
+
+observations, context = load_worldbank(first_year=2010)
+y0 = initial_state_from_data(
+    plhiv=float(observations.values["plhiv"][0]),
+    art_coverage=float(observations.values["art_coverage"][0]),
+    population=float(context["population"][0]),
+)
+fit = estimate_parameters(observations, fit=("beta", "alpha"), y0=y0)
+```
+
+Downloading lives in a script and its output is committed, so the loader stays pure, the
+tests run offline, and a fit is reproducible from a fixed snapshot rather than from whatever
+the API returned that day.
+
+### The published initial conditions do not match the published data
+
+Table 2 is labelled DRC 2020. Against the UNAIDS estimates for 2020:
+
+| Quantity | Table 2 | UNAIDS 2020 | Ratio |
+| --- | --- | --- | --- |
+| Total population | 89.00 M | 95.99 M | 1.08× |
+| People living with HIV | 0.484 M | 0.510 M | 1.05× |
+| **On treatment** | **0.077 M** | **0.270 M** | **3.51×** |
+| **ART coverage** | **15.9%** | **53%** | **3.33×** |
+
+Population and PLHIV agree within a few percent. The treatment compartment does not: Table 2's
+ART coverage of 15.9% is DRC in **2013** (14%), not 2020. Since $T$ is the series that
+identifies $\alpha$, starting a real-data fit from Table 2 pushes that error straight into the
+estimate of the parameter the fit exists to recover — which is why
+`initial_state_from_data` builds $y_0$ from the observed numbers instead. The three degrees of
+freedom the data cannot constrain (how untreated infections split between $I_1$, $I_2$ and $A$)
+are explicit arguments there rather than hidden defaults.
+
+### The model cannot be calibrated across the treatment scale-up
+
+This is the negative result, and it is the most useful thing this package has to say about
+applying the model to real data. Fitting the same series over different windows
+([`scripts/realdata_fit.py`](scripts/realdata_fit.py)):
+
+| Window | $n$ | $\beta$ | $\alpha$ | $R_0$ | ART coverage RMSE |
+| --- | --- | --- | --- | --- | --- |
+| 2005–2024 | 20 | 0.060 | **0.000** (on bound) | 0.49 | 0.251 |
+| 2010–2024 | 15 | 0.105 | 0.031 | 0.85 | 0.178 |
+| 2016–2024 | 9 | 0.376 | 0.332 | 3.04 | 0.109 |
+| 2020–2024 | 5 | 0.770 | **1.000** (on bound) | 6.23 | 0.056 |
+
+$\alpha$ spans its **entire admissible range**, resting on a bound at both extremes; $\beta$
+moves by a factor of thirteen; and $R_0$ ranges from 0.49 to 6.23 — from "the epidemic dies
+out" to "explosive growth", straddling the very threshold the paper is about. Same data, same
+model, different window.
+
+That is the signature of **model misspecification**, not of a bad optimiser. Real DRC ART
+coverage went from 1% in 2005 to 71% in 2024, driven by international funding and the 2016 WHO
+treat-all guideline. The model's $\alpha$ is a **constant**. No constant treatment-uptake rate
+can produce that S-curve, so each fit picks whatever $\alpha$ matches the local slope of the
+window it was given, and the residual never gets good in absolute terms — even the best window
+misses ART coverage by 5.6 percentage points.
+
+Two honest conclusions for anyone wanting to use this model on real data:
+
+1. **Any $\alpha$ from a multi-decade fit is an artefact of the window.** Report the window, or
+   do not report $\alpha$.
+2. **Fixing this needs a time-varying $\alpha(t)$** — a scale-up function with its own
+   parameters — not a better optimiser, a longer chain, or tighter bounds. The estimation and
+   MCMC machinery here would carry over unchanged; the model would not.
+
+---
+
 ## Bayesian uncertainty
 
 Least squares answers "what is the single best fit, and how uncertain is it" by reading
@@ -714,7 +795,7 @@ exact ratios are not.
 pytest
 ```
 
-157 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
+178 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
 MCMC chains and add roughly one to three minutes depending on the machine — there is no way to
 test a sampler's convergence diagnostics without actually sampling. The design principle
 throughout is that **no test compares the code to itself** — each one checks against an
@@ -768,12 +849,13 @@ hiv-drc-model/
 │   ├── sensitivity.py       Local indices, Latin hypercube sampling, PRCC
 │   ├── analysis.py          Parameter sweeps: R0 grid, bifurcation, threshold
 │   ├── observables.py       What surveillance reports, as functions of the state
+│   ├── realdata.py          Loading UNAIDS/World Bank series; initial state from data
 │   ├── synthetic.py         Mock data: forward model + Gaussian measurement error
 │   ├── estimation.py        The inverse problem: bounded nonlinear least squares
 │   ├── bayesian.py          The same inverse problem, solved by MCMC (emcee)
 │   ├── plotting.py          Figures (no computation lives here)
 │   └── cli.py               Command-line interface
-├── tests/                   145 tests (157 with doctests)
+├── tests/                   165 tests (178 with doctests)
 │   ├── conftest.py          Shared fixtures
 │   ├── test_model.py        ODE right-hand side and Jacobian
 │   ├── test_simulation.py   Integration, conservation, solver agreement
@@ -781,6 +863,7 @@ hiv-drc-model/
 │   ├── test_equilibria.py   Equilibria and the stability theorem
 │   ├── test_sensitivity.py  Local indices and PRCC
 │   ├── test_observables.py  Operators, checked against identities between them
+│   ├── test_realdata.py     Units, gaps, and the Table 2 discrepancy
 │   ├── test_synthetic.py    The data generator
 │   ├── test_estimation.py   Recovery, bounds, uncertainty, identifiability
 │   └── test_bayesian.py     Priors, likelihood, split-R-hat, MCMC recovery
@@ -788,9 +871,12 @@ hiv-drc-model/
 │   └── 01_inverse_problem.ipynb   Narrated walkthrough of the estimation pipeline
 ├── scripts/
 │   ├── coverage_study.py    One-off measurement behind the Bayesian coverage table
-│   └── observability_study.py  Which observation sets identify the rates
+│   ├── observability_study.py  Which observation sets identify the rates
+│   ├── fetch_worldbank.py   Downloads the DRC indicators (the only network access)
+│   └── realdata_fit.py      Fitting the real series, window by window
 ├── data/
 │   ├── README.md            Provenance and column definitions
+│   ├── real/                UNAIDS/World Bank snapshot for the DRC
 │   └── synthetic/           Generated observations (`--data` writes here)
 ├── figures/                 Generated output (git-ignored)
 ├── pyproject.toml
