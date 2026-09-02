@@ -174,3 +174,48 @@ def test_the_midpoint_priors_land_inside_a_twenty_year_window():
     for name in ("alpha_midpoint", "lam_midpoint"):
         prior = SCALEUP_PRIORS[name]
         assert 0.0 < prior.mu < 20.0
+
+
+# -- the priors reach the sampler ------------------------------------------
+
+
+def test_a_prior_actually_moves_the_posterior():
+    """The one failure mode that would invalidate every contraction number.
+
+    ``priors`` reaches ``log_posterior`` through emcee's positional ``args``
+    tuple. If that tuple ever drifts out of step with the signature, the
+    priors become a silent no-op: every fit still runs, every contraction
+    still gets computed, and all of it means nothing. So this asserts the
+    effect rather than the plumbing - a prior insisting beta is near 0.40,
+    against data generated at 0.15, has to drag the posterior with it and
+    narrow it.
+    """
+    from hiv_drc import generate_observations, run_mcmc
+
+    obs = generate_observations(noise=0.05, seed=20260830)
+    config = {
+        "fit": ("beta", "alpha"),
+        "n_walkers": 12,
+        "n_steps": 200,
+        "burn": 50,
+        "seed": 5,
+    }
+    flat = run_mcmc(obs, **config)
+    pulled = run_mcmc(obs, **config, priors={"beta": Normal(0.40, 0.01)})
+
+    assert pulled.median["beta"] > flat.median["beta"] + 0.05
+    assert pulled.std["beta"] < flat.std["beta"]
+
+
+def test_the_priors_used_are_recorded_on_the_result():
+    """Contraction needs the prior back afterwards, so the fit has to keep it."""
+    from hiv_drc import generate_observations, run_mcmc
+
+    obs = generate_observations(noise=0.05, seed=1)
+    priors = {"beta": LogNormal(0.15, 0.5)}
+    result = run_mcmc(
+        obs, fit=("beta", "alpha"), n_walkers=12, n_steps=120, burn=30, seed=2,
+        priors=priors,
+    )
+    assert result.priors is not None
+    assert "beta" in result.priors

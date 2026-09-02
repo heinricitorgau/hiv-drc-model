@@ -49,7 +49,7 @@ produced them.
 - **Informative priors with a contraction diagnostic**, because a tight prior always
   produces a tight posterior; the fit reports how much of each interval the data
   actually earned, and three of the nine scale-up parameters turn out to be prior echoes.
-- **220 tests**, no test comparing the code to itself.
+- **222 tests**, no test comparing the code to itself.
 
 ---
 
@@ -959,7 +959,7 @@ exact ratios are not.
 pytest
 ```
 
-220 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
+222 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
 MCMC chains and add roughly one to three minutes depending on the machine — there is no way to
 test a sampler's convergence diagnostics without actually sampling. The design principle
 throughout is that **no test compares the code to itself** — each one checks against an
@@ -976,6 +976,7 @@ independent derivation or a property that must hold mathematically:
 | The structural ceiling | That a hundredfold rise in $lpha$ moves ART coverage by under 2 points while $\lambda$ is held at its published value |
 | Prior densities | Numerical integration to one, and a log-normal's median and log-spread against its own samples |
 | The contraction diagnostic | Two constructed posteriors with known answers: one that *is* the prior (0), one ten times sharper (0.9) |
+| That priors reach the sampler | A prior insisting $eta pprox 0.40$, against data generated at 0.15, must drag the posterior with it — the one failure mode that would invalidate every contraction number |
 | Trajectories | The population balance $dN/dt = \Lambda - \mu N - \delta_1 A - \delta_2 T$, and the invariant region $N \le \Lambda/\mu$ |
 | Sensitivity indices | The exact values $+1$ for $\beta$ and $-\phi/(\mu+\phi)$ for $\phi$ |
 | PRCC implementation | A synthetic problem with a known monotone answer |
@@ -1024,7 +1025,7 @@ hiv-drc-model/
 │   ├── bayesian.py          The same inverse problem, solved by MCMC (emcee)
 │   ├── plotting.py          Figures (no computation lives here)
 │   └── cli.py               Command-line interface
-├── tests/                   204 tests (220 with doctests)
+├── tests/                   206 tests (222 with doctests)
 │   ├── conftest.py          Shared fixtures
 │   ├── test_model.py        ODE right-hand side and Jacobian
 │   ├── test_simulation.py   Integration, conservation, solver agreement
