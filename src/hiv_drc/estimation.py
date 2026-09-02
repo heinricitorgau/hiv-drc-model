@@ -316,8 +316,22 @@ def _covariance(jac: NDArray, residual: NDArray) -> NDArray:
 
     ``J`` is rank-deficient exactly when a parameter is unidentifiable, so the
     inverse is taken through an SVD pseudo-inverse with a relative cutoff: an
-    unidentifiable direction then reports a huge but finite variance instead
-    of raising, which is the honest answer.
+    unidentifiable direction reports infinite variance rather than raising,
+    which is the honest answer - the data constrain that direction not at all.
+
+    Two consequences worth knowing before reading a standard error from this:
+
+    * An infinite variance makes the Wald interval ``(-inf, +inf)``, which
+      "contains" the true value trivially. A coverage study must count such a
+      run as a failure, not a success; see ``scripts/coverage_study.py``.
+    * ``inf`` propagates through the off-diagonal arithmetic, so a parameter
+      *correlated* with an unidentifiable one comes back with a ``nan``
+      standard error even when it is itself perfectly well determined.
+
+    This is not hypothetical. At 10% measurement noise the optimiser drives
+    ``beta`` onto its lower bound of zero on roughly one run in twenty - at
+    ``beta = 0`` the infection term vanishes identically, so the model has no
+    sensitivity to ``beta`` at all - and both effects above follow.
     """
     m, n = jac.shape
     _, s, Vt = np.linalg.svd(jac, full_matrices=False)

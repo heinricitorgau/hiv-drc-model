@@ -24,9 +24,26 @@ Inverse problem
 >>> fit = estimate_parameters(observations, fit=("beta", "alpha"))
 >>> bool(abs(fit.relative_errors()["alpha"]) < 20.0)
 True
+
+Bayesian uncertainty
+--------------------
+>>> from hiv_drc import run_mcmc
+>>> posterior = run_mcmc(observations, n_walkers=10, n_steps=200, burn=60, seed=1)
+>>> bool(abs(posterior.relative_errors()["alpha"]) < 30.0)
+True
 """
 
 from .analysis import BifurcationSweep, bifurcation_sweep, critical_beta, r0_grid
+from .bayesian import (
+    ETA_BOUNDS,
+    MCMC_BOUNDS,
+    BayesianFitResult,
+    log_likelihood,
+    log_posterior,
+    log_prior,
+    run_mcmc,
+    split_rhat,
+)
 from .equilibria import (
     Equilibrium,
     disease_free_equilibrium,
@@ -122,6 +139,15 @@ __all__ = [
     "weight_vector",
     "cost_surface",
     "PARAMETER_BOUNDS",
+    # Bayesian uncertainty
+    "run_mcmc",
+    "BayesianFitResult",
+    "log_prior",
+    "log_likelihood",
+    "log_posterior",
+    "split_rhat",
+    "ETA_BOUNDS",
+    "MCMC_BOUNDS",
     # sweeps
     "r0_grid",
     "critical_beta",

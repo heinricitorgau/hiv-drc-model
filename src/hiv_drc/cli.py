@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from . import analysis, plotting
+from .bayesian import run_mcmc
 from .equilibria import disease_free_equilibrium, endemic_equilibrium
 from .estimation import PARAMETER_BOUNDS, cost_surface, estimate_multistart
 from .parameters import DRC_2020, INITIAL_STATE, Parameters
@@ -23,7 +24,7 @@ from .sensitivity import global_sensitivity, local_sensitivity_indices
 from .simulation import simulate
 from .synthetic import generate_observations
 
-STAGES = ("dynamics", "r0", "stability", "sensitivity", "estimate")
+STAGES = ("dynamics", "r0", "stability", "sensitivity", "estimate", "bayes")
 
 
 def _rule(title: str) -> None:
@@ -242,6 +243,45 @@ def run_estimate(args) -> list[tuple[str, object]]:
     return figures
 
 
+def run_bayes(args) -> list[tuple[str, object]]:
+    _rule("BAYESIAN UNCERTAINTY QUANTIFICATION")
+
+    truth = DRC_2020
+    fit_names = tuple(args.fit)
+    observations = generate_observations(
+        truth,
+        INITIAL_STATE,
+        t_span=(0.0, args.obs_years),
+        n_points=args.obs_points,
+        noise=args.noise,
+        noise_model=args.noise_model,
+        seed=args.seed,
+    )
+    print(f"generated {observations.n_points} annual observations of "
+          f"{' and '.join(observations.names)} over {args.obs_years:g} years")
+    print(f"  measurement error: {100 * args.noise:.0f}% {args.noise_model}, "
+          f"seed {args.seed}")
+
+    print(f"\nsampling the posterior of {', '.join(fit_names)} with "
+          f"{args.mcmc_walkers} walkers x {args.mcmc_steps} steps "
+          f"({args.mcmc_burn} discarded as burn-in) ...")
+    result = run_mcmc(
+        observations,
+        fit=fit_names,
+        n_walkers=args.mcmc_walkers,
+        n_steps=args.mcmc_steps,
+        burn=args.mcmc_burn,
+        seed=args.seed,
+    )
+    print(result.summary())
+
+    return [
+        ("09_posterior", plotting.plot_posterior(result)),
+        ("10_trace", plotting.plot_trace(result)),
+        ("11_posterior_predictive", plotting.plot_posterior_predictive(observations, result)),
+        ("12_bayes_vs_frequentist", plotting.plot_bayes_vs_frequentist(result)),
+    ]
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -289,6 +329,15 @@ def build_parser() -> argparse.ArgumentParser:
                        help="resolution of the cost-surface grid")
     group.add_argument("--data", type=Path, default=None,
                        help="write the synthetic observations to this CSV")
+
+    mcmc = parser.add_argument_group("Bayesian uncertainty (the bayes stage)")
+    mcmc.add_argument("--mcmc-walkers", type=int, default=16,
+                      help="ensemble size for the MCMC sampler")
+    mcmc.add_argument("--mcmc-steps", type=int, default=1000,
+                      help="steps per walker")
+    mcmc.add_argument("--mcmc-burn", type=int, default=250,
+                      help="steps discarded as burn-in")
+
     parser.add_argument("--show", action="store_true",
                         help="open the figures instead of only saving them")
     parser.add_argument("--no-save", action="store_true",
@@ -314,6 +363,7 @@ def main(argv: list[str] | None = None) -> int:
         "stability": run_stability,
         "sensitivity": run_sensitivity,
         "estimate": run_estimate,
+        "bayes": run_bayes,
     }
 
     started = time.perf_counter()

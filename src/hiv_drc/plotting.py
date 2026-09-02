@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.figure import Figure
 
+from .bayesian import BayesianFitResult
 from .equilibria import Equilibrium
 from .estimation import FitResult
 from .parameters import COMPARTMENT_LABELS, Parameters
@@ -33,6 +34,10 @@ __all__ = [
     "plot_bifurcation",
     "plot_fit",
     "plot_cost_surface",
+    "plot_posterior",
+    "plot_trace",
+    "plot_posterior_predictive",
+    "plot_bayes_vs_frequentist",
     "save_all",
 ]
 
@@ -539,6 +544,203 @@ def plot_cost_surface(
     ax.set_xlim(x.min(), x.max())
     ax.set_ylim(y.min(), y.max())
     ax.legend(frameon=False, labelcolor="white", loc="upper right")
+    fig.tight_layout()
+    return fig
+
+
+def plot_posterior(result: BayesianFitResult) -> Figure:
+    """Pairwise marginal posteriors - the standard MCMC "corner" plot.
+
+    Diagonal panels are each parameter's marginal histogram. Below the
+    diagonal, a hexbin of the joint draws shows the pairwise shape: a round
+    cloud says the two parameters are separately identified by the data, an
+    elongated or curved one says only some combination of them is - the same
+    question :func:`cost_surface` answers for the frequentist fit, asked here
+    of the actual posterior rather than the objective's local curvature. The
+    upper triangle is left blank, the usual corner-plot convention.
+    """
+    names = result.all_names
+    n = len(names)
+    samples = result.samples
+    known = result.truth is not None
+
+    fig, axes = plt.subplots(n, n, figsize=(2.7 * n, 2.7 * n))
+    axes = np.atleast_2d(axes)
+
+    for i in range(n):
+        for j in range(n):
+            ax = axes[i, j]
+            if j > i:
+                ax.axis("off")
+                continue
+            if i == j:
+                ax.hist(samples[:, i], bins=40, color="tab:blue", alpha=0.75)
+                ax.axvline(result.median[names[i]], color="crimson", lw=1.5)
+                if known and names[i] in result.truth:
+                    ax.axvline(result.truth[names[i]], color="black", ls="--", lw=1.5)
+                ax.set_yticks([])
+            else:
+                ax.hexbin(samples[:, j], samples[:, i], gridsize=30, cmap="viridis", mincnt=1)
+                ax.plot(
+                    result.median[names[j]], result.median[names[i]],
+                    "+", color="crimson", ms=11, mew=2,
+                )
+                if known and names[i] in result.truth and names[j] in result.truth:
+                    ax.plot(
+                        result.truth[names[j]], result.truth[names[i]],
+                        "*", color="white", mec="black", ms=10,
+                    )
+            if i == n - 1:
+                ax.set_xlabel(names[j], fontsize=10)
+            else:
+                ax.set_xticklabels([])
+            if j == 0 and i != 0:
+                ax.set_ylabel(names[i], fontsize=10)
+            elif j > 0:
+                ax.set_yticklabels([])
+
+    fig.suptitle(
+        f"Posterior over {', '.join(result.names)} and the fitted noise levels", fontsize=13
+    )
+    fig.tight_layout()
+    return fig
+
+
+def plot_trace(result: BayesianFitResult) -> Figure:
+    """Per-parameter walker traces - the step-by-step picture behind R-hat.
+
+    Every walker's own post-burn-in path is drawn as a thin, semi-transparent
+    line, all in one colour per panel. A well-mixed chain looks like a fuzzy
+    horizontal band with no single walker distinguishable from the rest -
+    visual confirmation of what a split-R-hat near 1 asserts numerically. A
+    chain still drifting, or with one walker visibly separated from the
+    others, is the same problem :attr:`~hiv_drc.bayesian.BayesianFitResult.rhat`
+    flags, made concrete enough to actually diagnose.
+    """
+    names = result.all_names
+    n = len(names)
+    fig, axes = plt.subplots(n, 1, figsize=(9.0, 1.9 * n), sharex=True)
+    axes = np.atleast_1d(axes)
+
+    steps = np.arange(result.chain.shape[0])
+    for ax, name in zip(axes, names, strict=True):
+        ax.plot(steps, result.chain[:, :, names.index(name)], color="tab:blue", alpha=0.25, lw=0.8)
+        ax.axhline(result.median[name], color="crimson", lw=1.3)
+        _style(ax, "", "", name)
+        ax.text(
+            0.99, 0.90, f"R-hat = {result.rhat[name]:.3f}",
+            transform=ax.transAxes, ha="right", va="top", fontsize=9, color="0.3",
+        )
+
+    axes[-1].set_xlabel("step (post burn-in)")
+    fig.suptitle(
+        f"Walker traces - {result.n_walkers} walkers, {result.n_steps} steps "
+        f"({result.burn} discarded as burn-in)",
+        fontsize=13,
+    )
+    fig.tight_layout()
+    return fig
+
+
+def plot_posterior_predictive(
+    obs: Observations, result: BayesianFitResult, n_draws: int = 300, seed: int = 0
+) -> Figure:
+    """Observed data against the posterior *predictive* distribution.
+
+    Wider than a credible band on the trajectory alone: this draws parameter
+    sets from the posterior and adds each draw's own fitted measurement
+    noise (:meth:`~hiv_drc.bayesian.BayesianFitResult.posterior_predictive`),
+    so the shaded band is what the model expects a *new* observation to look
+    like, not only where the noise-free curve could plausibly sit. For a
+    well-specified model, roughly 90% of the actual points should fall inside
+    the 5-95% band - the figure reports the fraction that does, so a
+    structural misfit (systematically outside) or an overestimated noise
+    level (everything comfortably inside a much-too-wide band) both show up
+    as a number, not just a visual impression.
+    """
+    predictive = result.posterior_predictive(obs, n_draws=n_draws, seed=seed)
+    names = obs.names
+
+    fig, axes = plt.subplots(1, len(names), figsize=(6.6 * len(names), 5.0))
+    axes = np.atleast_1d(axes)
+
+    for ax, name in zip(axes, names, strict=True):
+        draws = predictive[name]
+        lo, mid, hi = np.percentile(draws, [5, 50, 95], axis=0)
+        ax.fill_between(
+            obs.t, lo, hi, color="tab:blue", alpha=0.25, label="90% posterior predictive"
+        )
+        ax.plot(obs.t, mid, color="tab:blue", lw=2, label="predictive median")
+        ax.plot(obs.t, obs.values[name], "o", color="0.2", ms=5, label="observed", zorder=3)
+        if obs.truth is not None:
+            ax.plot(obs.t, obs.truth[name], "--", color="crimson", lw=1.5, label="ground truth")
+
+        inside = float(np.mean((obs.values[name] >= lo) & (obs.values[name] <= hi)))
+        _style(
+            ax,
+            f"{COMPARTMENT_LABELS.get(name, name)} - {100 * inside:.0f}% of points inside the band",
+            "time (years)",
+            "population (millions)",
+        )
+        ax.legend(frameon=False, fontsize=9)
+
+    fig.tight_layout()
+    return fig
+
+
+def plot_bayes_vs_frequentist(result: BayesianFitResult) -> Figure:
+    """The two methods' intervals for the same fit, side by side.
+
+    The frequentist interval (Wald, from the least-squares Jacobian) assumes
+    the log-likelihood is locally quadratic at the optimum. The MCMC interval
+    makes no such assumption - it is read directly off the sampled posterior,
+    which also automatically respects this module's tighter, more
+    epidemiologically defensible prior box (:data:`~hiv_drc.bayesian.MCMC_BOUNDS`)
+    where the Wald interval, an unconstrained asymptotic formula, does not.
+    Where the two disagree - one visibly wider, narrower, or off-centre from
+    the other - the quadratic approximation or the wide safety-box bounds
+    behind the Wald interval were doing some of the work; the coverage study
+    in the README quantifies how that gap grows with measurement noise.
+
+    Each rate is shown as estimate / reference, where the reference is the
+    true value when known and the posterior median otherwise, since the
+    fitted rates are not on comparable scales.
+    """
+    names = result.names
+    known = result.truth is not None
+    ls = result.least_squares
+
+    fig, ax = plt.subplots(figsize=(8.5, 1.6 * len(names) + 1.2))
+    positions = np.arange(len(names))
+    for i, name in enumerate(names):
+        reference = result.truth[name] if known else result.median[name]
+        lo_f, hi_f = ls.ci95[name]
+        lo_b, hi_b = result.credible_interval[name]
+        ax.errorbar(
+            ls.estimates[name] / reference, i + 0.15,
+            xerr=[
+                [(ls.estimates[name] - lo_f) / reference],
+                [(hi_f - ls.estimates[name]) / reference],
+            ],
+            fmt="s", ms=9, color="tab:orange", ecolor="tab:orange", capsize=5,
+            label="least squares (95% Wald CI)" if i == 0 else None,
+        )
+        ax.errorbar(
+            result.median[name] / reference, i - 0.15,
+            xerr=[
+                [(result.median[name] - lo_b) / reference],
+                [(hi_b - result.median[name]) / reference],
+            ],
+            fmt="o", ms=9, color="tab:blue", ecolor="tab:blue", capsize=5,
+            label="MCMC (95% credible interval)" if i == 0 else None,
+        )
+
+    ax.axvline(1.0, color="black", ls="--", lw=1.5,
+               label="true value" if known else "reference (posterior median)")
+    ax.set_yticks(positions, names)
+    ax.set_ylim(-0.6, len(names) - 0.4)
+    _style(ax, "Frequentist versus Bayesian intervals", "value / reference", "")
+    ax.legend(frameon=False, loc="best", fontsize=9)
     fig.tight_layout()
     return fig
 
