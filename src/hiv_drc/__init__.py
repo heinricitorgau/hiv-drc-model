@@ -62,6 +62,13 @@ from .estimation import (
     weight_vector,
 )
 from .model import force_of_infection, jacobian, rhs, total_population
+from .observables import (
+    OBSERVABLE_LABELS,
+    OBSERVABLES,
+    Observable,
+    apply,
+    resolve,
+)
 from .parameters import (
     COMPARTMENTS,
     DRC_2020,
@@ -125,6 +132,12 @@ __all__ = [
     "global_sensitivity",
     "GlobalSensitivity",
     "prcc",
+    # observation operators
+    "OBSERVABLES",
+    "OBSERVABLE_LABELS",
+    "Observable",
+    "resolve",
+    "apply",
     # synthetic data
     "Observations",
     "generate_observations",

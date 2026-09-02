@@ -30,12 +30,14 @@ rather than by the size of the thing being measured.
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from .observables import Observable, apply, resolve
 from .parameters import COMPARTMENTS, DRC_2020, INITIAL_STATE, Parameters
 from .simulation import simulate
 
@@ -78,6 +80,13 @@ class Observations:
         The relative noise level ``eta`` passed to the generator.
     noise_model:
         Which entry of :data:`NOISE_MODELS` was used.
+    observables:
+        Any observation operators beyond
+        :data:`~hiv_drc.observables.OBSERVABLES`, carried here so that
+        everything holding the observations can resolve their names without
+        the operators being threaded through every call in between.  Not
+        written to CSV - a file cannot carry code - so data reloaded from
+        disk uses the standard registry.
     """
 
     t: NDArray
@@ -87,11 +96,24 @@ class Observations:
     parameters: Parameters | None = None
     noise: float = 0.0
     noise_model: str = "proportional"
+    observables: Mapping[str, Observable] | None = field(default=None, repr=False)
 
     @property
     def names(self) -> tuple[str, ...]:
-        """Observed compartment names, in the canonical compartment order."""
-        return tuple(sorted(self.values, key=COMPARTMENTS.index))
+        """Observed series names, in a stable order.
+
+        Compartments come first in the model's own order, so the common case
+        reads naturally; anything else - the surveillance aggregates in
+        :data:`~hiv_drc.observables.OBSERVABLES` - follows alphabetically.
+        The only requirement is that the order is deterministic, since it is
+        the layout :meth:`stack` and every residual vector depend on.
+        """
+        def key(name: str) -> tuple[int, int, str]:
+            if name in COMPARTMENTS:
+                return (0, COMPARTMENTS.index(name), "")
+            return (1, 0, name)
+
+        return tuple(sorted(self.values, key=key))
 
     @property
     def n_points(self) -> int:
@@ -170,6 +192,7 @@ def generate_observations(
     noise_model: str = "proportional",
     seed: int | np.random.Generator | None = 20260830,
     clip: bool = True,
+    observables: Mapping[str, Observable] | None = None,
 ) -> Observations:
     """Simulate the model and add Gaussian measurement error.
 
@@ -184,7 +207,13 @@ def generate_observations(
         take.  The default is 31 annual observations over 30 years, roughly
         what a national programme accumulates.
     observed:
-        Which compartments are reported.
+        Which series are reported.  Any name in
+        :data:`~hiv_drc.observables.OBSERVABLES` - the six compartments,
+        or a surveillance aggregate such as ``"plhiv"`` or
+        ``"art_coverage"``.
+    observables:
+        Extra or overriding observation operators for this call; see
+        :func:`~hiv_drc.observables.resolve`.
     noise:
         Relative noise level ``eta``; ``0.05`` is 5%.  Zero gives clean data,
         which is the first case to fit when the estimator misbehaves.
@@ -216,16 +245,17 @@ def generate_observations(
         raise ValueError(
             f"noise_model must be one of {NOISE_MODELS}, got {noise_model!r}"
         )
-    unknown = set(observed) - set(COMPARTMENTS)
-    if unknown:
-        raise ValueError(f"unknown compartment(s): {sorted(unknown)}")
+    resolve(tuple(observed), observables)  # fail fast on an unknown name
 
     rng = seed if isinstance(seed, np.random.Generator) else np.random.default_rng(seed)
 
     t = np.linspace(t_span[0], t_span[1], n_points)
     solution = simulate(p, y0, t_span, t_eval=t)
 
-    truth: dict[str, NDArray] = {name: solution[name].copy() for name in observed}
+    truth: dict[str, NDArray] = {
+        name: np.asarray(series).copy()
+        for name, series in apply(solution, tuple(observed), observables).items()
+    }
     sigma: dict[str, NDArray] = {}
     values: dict[str, NDArray] = {}
     for name, clean in truth.items():
@@ -245,4 +275,5 @@ def generate_observations(
         parameters=p,
         noise=noise,
         noise_model=noise_model,
+        observables=observables,
     )

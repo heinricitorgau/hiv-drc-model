@@ -136,7 +136,7 @@ def test_reloaded_data_has_no_ground_truth_parameters():
     [
         ({"noise": -0.1}, "non-negative"),
         ({"noise_model": "poisson"}, "noise_model"),
-        ({"observed": ("A", "Z")}, "unknown compartment"),
+        ({"observed": ("A", "Z")}, "unknown observable"),
     ],
 )
 def test_invalid_arguments_are_rejected(kwargs, match):

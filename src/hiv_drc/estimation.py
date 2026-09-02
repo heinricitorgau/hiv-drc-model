@@ -52,6 +52,7 @@ from numpy.typing import ArrayLike, NDArray
 from scipy.optimize import least_squares
 from scipy.stats import t as student_t
 
+from .observables import apply
 from .parameters import DRC_2020, INITIAL_STATE, Parameters
 from .reproduction import reproduction_number
 from .simulation import Solution, simulate
@@ -111,10 +112,15 @@ def predict(
     rtol: float = 1e-10,
     atol: float = 1e-12,
 ) -> dict[str, NDArray]:
-    """Model values for the observed compartments at the observation times.
+    """Model values for the observed series at the observation times.
 
     The solver is asked for exactly ``obs.t``, so no interpolation error
     enters the residual.
+
+    Each name is mapped through its observation operator (see
+    :mod:`hiv_drc.observables`), so this returns whatever the data actually
+    measures - a raw compartment, or an aggregate like ``"plhiv"`` that no
+    single compartment corresponds to.
     """
     solution = simulate(
         p,
@@ -124,7 +130,7 @@ def predict(
         rtol=rtol,
         atol=atol,
     )
-    return {name: solution[name] for name in obs.names}
+    return apply(solution, obs.names, obs.observables)
 
 
 def weight_vector(obs: Observations, weights: str | None = "scale") -> NDArray:

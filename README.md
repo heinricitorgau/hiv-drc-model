@@ -38,7 +38,10 @@ produced them.
   it. Measured against the least-squares interval over 20 replicates at 10% noise: the same
   coverage in 2–4× tighter intervals, and no degenerate output on the run where the
   frequentist standard error blows up to `inf`.
-- **138 tests**, no test comparing the code to itself.
+- **Observation operators** mapping model state to what surveillance actually publishes
+  (people living with HIV, ART coverage), because no health system reports "people currently
+  in the symptomatic compartment" — with a measured answer to which data is worth collecting.
+- **157 tests**, no test comparing the code to itself.
 
 ---
 
@@ -51,6 +54,7 @@ produced them.
 - [Output figures](#output-figures)
 - [Results](#results)
 - [The inverse problem](#the-inverse-problem)
+- [What can actually be observed](#what-can-actually-be-observed)
 - [Bayesian uncertainty](#bayesian-uncertainty)
 - [Testing and verification](#testing-and-verification)
 - [Project structure](#project-structure)
@@ -526,6 +530,74 @@ within $2\times10^{-6}$, so the optimum found is the global one for this objecti
 
 ---
 
+## What can actually be observed
+
+Everything above fits the compartments $A$ and $T$ directly. That is an
+idealisation, and it is the thing standing between this package and real data: **no
+surveillance system publishes "people currently in the symptomatic compartment."** UNAIDS, WHO
+and national programmes report aggregates over a *different* partition of the same population:
+
+| Published quantity | In model terms | Registry name |
+| --- | --- | --- |
+| People living with HIV | $I_1 + I_2 + A + T$ | `plhiv` |
+| People on antiretroviral therapy | $T$ | `on_art` |
+| Known HIV status | $I_2 + A + T$ | `diagnosed` |
+| ART coverage | $T / (I_1 + I_2 + A + T)$ | `art_coverage` |
+| HIV prevalence | $(I_1 + I_2 + A + T) / N$ | `prevalence` |
+
+The model's decomposition (undiagnosed / diagnosed / symptomatic / treated) is a *modelling*
+choice; the published decomposition is an artefact of what a health system can count. Fitting
+real data means mapping between them, and `hiv_drc.observables` is that map — each name is an
+**observation operator**, a function from model state to one observed series. Note that
+`art_coverage` is a ratio, so the operators are callables rather than a matrix; a linear
+formulation could not express it. The six compartments are registered as identity operators,
+so observing a compartment is the ordinary case rather than a special one, and every existing
+call keeps working.
+
+```python
+observations = generate_observations(observed=("plhiv", "on_art"), noise=0.05)
+fit = estimate_parameters(observations, fit=("beta", "alpha"))
+```
+
+### Which data is worth collecting?
+
+This turns an abstract question into a measurable one: does the decomposition that actually
+gets published contain enough information to pin down $\beta$ and $\alpha$?
+[`scripts/observability_study.py`](scripts/observability_study.py) fits the same underlying
+epidemic through six observation sets, 20 noise realisations each at 5% noise. The **spread**
+of the estimate across realisations is the practical identifiability measure — the mean error
+is near zero everywhere, so it is the scatter that matters:
+
+| Observation set | $\beta$ spread | $\alpha$ spread | Coverage | Degenerate fits |
+| --- | --- | --- | --- | --- |
+| `A` + `T` (the idealisation) | 14.5% | 9.6% | 95% | 0 |
+| **`plhiv` + `on_art`** (what UNAIDS publishes) | **1.6%** | 11.8% | 95% | 0 |
+| `prevalence` + `art_coverage` | 2.2% | 13.3% | 100% | 0 |
+| `diagnosed` + `on_art` | 23.4% | 10.4% | 95% | 0 |
+| `plhiv` alone | 5.0% | **117.6%** | 84% | 1 |
+| `on_art` alone | **55.9%** | 14.1% | 89% | 2 |
+
+Three things fall out of this, and the first is good news:
+
+1. **The data that actually exists is better than the idealisation, by a lot.** Fitting
+   `plhiv` + `on_art` pins $\beta$ down about **nine times more tightly** than the package's own
+   `A` + `T` default (1.6% spread against 14.5%). $A$ is a small, fast-decaying compartment
+   carrying little information about transmission; PLHIV aggregates the whole infected pool,
+   including the undiagnosed $I_1$ where the transmission signal lives.
+2. **Each series pins down a different rate, and one alone pins down neither.** PLHIV on its
+   own leaves $\alpha$ essentially unidentified (118% spread, and one fit degenerates entirely);
+   ART counts alone leave $\beta$ unidentified (56%). The transmission signal and the
+   treatment-uptake signal live in different series, so a real study needs both.
+3. **Excluding the undiagnosed costs you most of the transmission signal.** `diagnosed` +
+   `on_art` differs from `plhiv` + `on_art` only by dropping $I_1$, and $\beta$'s spread goes
+   from 1.6% to 23.4% — a fifteen-fold loss from omitting the one compartment nobody counts
+   directly.
+
+For anyone pointing this at real data: collect PLHIV and ART numbers, and do not substitute
+"diagnosed" for "living with HIV".
+
+---
+
 ## Bayesian uncertainty
 
 Least squares answers "what is the single best fit, and how uncertain is it" by reading
@@ -642,7 +714,7 @@ exact ratios are not.
 pytest
 ```
 
-138 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
+157 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
 MCMC chains and add roughly one to three minutes depending on the machine — there is no way to
 test a sampler's convergence diagnostics without actually sampling. The design principle
 throughout is that **no test compares the code to itself** — each one checks against an
@@ -695,25 +767,28 @@ hiv-drc-model/
 │   ├── equilibria.py        Disease-free and endemic equilibria, stability
 │   ├── sensitivity.py       Local indices, Latin hypercube sampling, PRCC
 │   ├── analysis.py          Parameter sweeps: R0 grid, bifurcation, threshold
+│   ├── observables.py       What surveillance reports, as functions of the state
 │   ├── synthetic.py         Mock data: forward model + Gaussian measurement error
 │   ├── estimation.py        The inverse problem: bounded nonlinear least squares
 │   ├── bayesian.py          The same inverse problem, solved by MCMC (emcee)
 │   ├── plotting.py          Figures (no computation lives here)
 │   └── cli.py               Command-line interface
-├── tests/                   128 tests (138 with doctests)
+├── tests/                   145 tests (157 with doctests)
 │   ├── conftest.py          Shared fixtures
 │   ├── test_model.py        ODE right-hand side and Jacobian
 │   ├── test_simulation.py   Integration, conservation, solver agreement
 │   ├── test_reproduction.py R0 closed form against the next-generation matrix
 │   ├── test_equilibria.py   Equilibria and the stability theorem
 │   ├── test_sensitivity.py  Local indices and PRCC
+│   ├── test_observables.py  Operators, checked against identities between them
 │   ├── test_synthetic.py    The data generator
 │   ├── test_estimation.py   Recovery, bounds, uncertainty, identifiability
 │   └── test_bayesian.py     Priors, likelihood, split-R-hat, MCMC recovery
 ├── notebooks/
 │   └── 01_inverse_problem.ipynb   Narrated walkthrough of the estimation pipeline
 ├── scripts/
-│   └── coverage_study.py    One-off measurement behind the Bayesian coverage table
+│   ├── coverage_study.py    One-off measurement behind the Bayesian coverage table
+│   └── observability_study.py  Which observation sets identify the rates
 ├── data/
 │   ├── README.md            Provenance and column definitions
 │   └── synthetic/           Generated observations (`--data` writes here)
