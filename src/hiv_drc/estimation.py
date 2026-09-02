@@ -54,7 +54,7 @@ from scipy.stats import t as student_t
 
 from .observables import apply
 from .parameters import DRC_2020, INITIAL_STATE, Parameters
-from .reproduction import reproduction_number
+from .reproduction import reproduction_number, reproduction_number_at
 from .simulation import Solution, simulate
 from .synthetic import Observations
 
@@ -91,6 +91,15 @@ PARAMETER_BOUNDS: dict[str, tuple[float, float]] = {
     "alpha": (0.0, 1.0),
     "kappa1": (0.0, 1.0),
     "kappa2": (0.0, 1.0),
+    # Logistic treatment scale-up; see Parameters.alpha_at. Fitting these
+    # instead of a scalar `alpha` is what lets the model follow a programme
+    # that expanded over time rather than one that never changed.
+    "alpha_ceiling": (0.0, 2.0),
+    "alpha_midpoint": (0.0, 50.0),
+    "alpha_rate": (0.0, 5.0),
+    "lam_ceiling": (0.0, 2.0),
+    "lam_midpoint": (0.0, 50.0),
+    "lam_rate": (0.0, 5.0),
 }
 
 #: Value returned per residual when the integration fails outright.  Large
@@ -307,7 +316,17 @@ class FitResult:
             lines.append(row)
         rmse = "   ".join(f"{name}: {value:.6f}" for name, value in self.rmse.items())
         lines.append(f"\n  cost = {self.cost:.6e}   RMSE (millions)   {rmse}")
-        lines.append(f"  R0 at the estimate = {self.R0:.6f}")
+        if self.parameters.is_time_varying:
+            # R0 is undefined while alpha is still moving; report the
+            # instantaneous value at each end of the window instead.
+            first, last = float(self.solution.t[0]), float(self.solution.t[-1])
+            lines.append(
+                f"  R0(t) at the estimate: "
+                f"{reproduction_number_at(self.parameters, first).R0:.6f} at t={first:g}"
+                f" -> {reproduction_number_at(self.parameters, last).R0:.6f} at t={last:g}"
+            )
+        else:
+            lines.append(f"  R0 at the estimate = {self.R0:.6f}")
         if len(self.names) > 1:
             lines.append(
                 f"  corr({self.names[0]}, {self.names[1]}) = "

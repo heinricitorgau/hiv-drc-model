@@ -49,6 +49,7 @@ __all__ = [
     "next_generation_matrices",
     "r0_from_ngm",
     "susceptible_fraction",
+    "reproduction_number_at",
 ]
 
 
@@ -81,10 +82,25 @@ def susceptible_fraction(p: Parameters) -> float:
 def reproduction_number(p: Parameters) -> ReproductionNumber:
     """Evaluate the closed form of equations (3.9)–(3.12).
 
+    Raises
+    ------
+    ValueError
+        If ``p`` configures a treatment scale-up.  :math:`R_0` is a property
+        of a system with constant coefficients: it counts secondary
+        infections from one case over a whole infectious lifetime, assuming
+        the rates that govern that lifetime do not move.  While α is still
+        scaling up they do, and a single number would be quietly meaningless.
+        :func:`reproduction_number_at` gives the instantaneous value instead.
+
     >>> from hiv_drc.parameters import DRC_2020
     >>> round(reproduction_number(DRC_2020).R0, 4)
     1.2145
     """
+    if p.is_time_varying:
+        raise ValueError(
+            "R0 is not defined for a time-varying alpha; "
+            "use reproduction_number_at(p, t) for the instantaneous value"
+        )
     a1, a2, a3, a4 = p.a1, p.a2, p.a3, p.a4
     D = a1 * (a2 * a3 * a4 - p.kappa1 * p.kappa2 * p.sigma2 - p.alpha * p.kappa2 * a3)
 
@@ -133,3 +149,33 @@ def r0_from_ngm(p: Parameters) -> float:
     """Spectral radius of :math:`FV^{-1}` — an independent check on the algebra."""
     F, V = next_generation_matrices(p)
     return float(np.max(np.abs(np.linalg.eigvals(F @ np.linalg.inv(V)))))
+
+
+def reproduction_number_at(p: Parameters, t: float) -> ReproductionNumber:
+    """:math:`R_0` of the system frozen at time ``t``.
+
+    Under a scale-up, this evaluates the closed form with α held at
+    :math:`lpha(t)` - the reproduction number the epidemic *would* settle
+    into if the programme stopped changing at that moment.
+
+    It is a diagnostic, not a threshold theorem.  Crossing
+    :math:`R_0(t) = 1` says nothing on its own about whether the epidemic
+    dies out, because the system never sits at any of these frozen states
+    long enough for the corresponding equilibrium to assert itself.  Read it
+    as "how hard is the programme pushing right now", and read the trajectory
+    itself for what actually happens.
+
+    Examples
+    --------
+    >>> from hiv_drc.parameters import DRC_2020
+    >>> ramp = DRC_2020.replace(alpha=0.01, alpha_ceiling=0.6,
+    ...                         alpha_midpoint=10.0, alpha_rate=0.5)
+    >>> early, late = reproduction_number_at(ramp, 0.0), reproduction_number_at(ramp, 25.0)
+    >>> early.R0 > late.R0    # more treatment, less transmission
+    True
+    """
+    frozen = p.replace(
+        alpha=p.alpha_at(t), alpha_ceiling=None,
+        lam=p.lam_at(t), lam_ceiling=None,
+    )
+    return reproduction_number(frozen)

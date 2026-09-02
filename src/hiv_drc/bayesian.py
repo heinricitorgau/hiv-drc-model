@@ -57,7 +57,7 @@ from numpy.typing import ArrayLike, NDArray
 
 from .estimation import PARAMETER_BOUNDS, FitResult, estimate_parameters, predict
 from .parameters import DRC_2020, INITIAL_STATE, Parameters
-from .reproduction import reproduction_number
+from .reproduction import reproduction_number, reproduction_number_at
 from .simulation import Solution, simulate
 from .synthetic import Observations
 
@@ -91,6 +91,8 @@ ETA_BOUNDS: tuple[float, float] = (1e-3, 2.0)
 MCMC_BOUNDS: dict[str, tuple[float, float]] = {
     "beta": (0.0, 0.6),
     "alpha": (0.0, 0.3),
+    "alpha_ceiling": (0.0, 1.0),
+    "alpha_rate": (0.0, 2.0),
 }
 
 
@@ -413,7 +415,17 @@ class BayesianFitResult:
             f"{self.n_walkers} walkers x {self.n_steps} steps "
             f"({self.burn} discarded as burn-in)"
         )
-        lines.append(f"  R0 at the posterior median = {self.R0:.6f}")
+        if self.parameters.is_time_varying:
+            # R0 is undefined while alpha is still moving; report the
+            # instantaneous value at each end of the window instead.
+            first, last = float(self.solution.t[0]), float(self.solution.t[-1])
+            lines.append(
+                f"  R0(t) at the estimate: "
+                f"{reproduction_number_at(self.parameters, first).R0:.6f} at t={first:g}"
+                f" -> {reproduction_number_at(self.parameters, last).R0:.6f} at t={last:g}"
+            )
+        else:
+            lines.append(f"  R0 at the posterior median = {self.R0:.6f}")
         return "\n".join(lines)
 
 

@@ -44,7 +44,9 @@ produced them.
 - **Real-data ingestion** from the UNAIDS/World Bank estimates, and an honest report of
   what happens when the published model meets them: it cannot be calibrated across the
   treatment scale-up, and the published initial conditions disagree with the published data.
-- **178 tests**, no test comparing the code to itself.
+- **Time-varying rates** for the treatment and diagnosis programmes, with the constant-coefficient
+  theory refusing to answer rather than misleading once they are switched on.
+- **198 tests**, no test comparing the code to itself.
 
 ---
 
@@ -59,6 +61,7 @@ produced them.
 - [The inverse problem](#the-inverse-problem)
 - [What can actually be observed](#what-can-actually-be-observed)
 - [Meeting real data](#meeting-real-data)
+- [Time-varying rates](#time-varying-rates)
 - [Bayesian uncertainty](#bayesian-uncertainty)
 - [Testing and verification](#testing-and-verification)
 - [Project structure](#project-structure)
@@ -673,9 +676,94 @@ Two honest conclusions for anyone wanting to use this model on real data:
 
 1. **Any $\alpha$ from a multi-decade fit is an artefact of the window.** Report the window, or
    do not report $\alpha$.
-2. **Fixing this needs a time-varying $\alpha(t)$** — a scale-up function with its own
-   parameters — not a better optimiser, a longer chain, or tighter bounds. The estimation and
-   MCMC machinery here would carry over unchanged; the model would not.
+2. **Fixing this needs time-varying rates**, not a better optimiser, a longer chain, or tighter
+   bounds. The estimation and MCMC machinery carries over unchanged; the model does not. That
+   is the next section.
+
+---
+
+## Time-varying rates
+
+`Parameters` can give $\alpha$ and $\lambda$ a logistic scale-up — the shape a public-health
+programme actually expands in, slow while it is being stood up, fastest in the middle,
+flattening as it approaches the population it can reach:
+
+```python
+ramp = DRC_2020.replace(alpha=0.01, alpha_ceiling=0.5, alpha_midpoint=10.0, alpha_rate=0.4)
+ramp.alpha_at(10.0)          # 0.255, half way at the midpoint
+```
+
+`alpha_ceiling=None` is the default and means constant $\alpha$, so the published model and
+every result above is untouched — `test_the_system_stays_autonomous_without_a_scaleup` pins
+that down. The scale-up parameters are ordinary fields, so fitting them needs nothing new:
+`fit=("beta", "alpha", "alpha_ceiling", "alpha_midpoint", "alpha_rate")` flows through
+`estimate_parameters`, `run_mcmc` and the bounds machinery unchanged.
+
+**A time-varying rate makes the system non-autonomous, and that invalidates the theory.**
+$R_0$, the equilibria and the stability theorem are statements about constant coefficients;
+while $\alpha$ is still moving there is no fixed point to be stable about. So
+`reproduction_number()` and the derived exit rates `a1`/`a2` **raise** on a time-varying
+parameter set rather than returning a number that would look fine and mean nothing.
+`reproduction_number_at(p, t)` gives the instantaneous value, clearly labelled as a diagnostic
+rather than a threshold.
+
+### Making $\alpha$ time-varying does not fix the fit
+
+Three variants on the same 2005–2024 series
+([`scripts/scaleup_fit.py`](scripts/scaleup_fit.py)):
+
+| Model | Parameters | Cost | ART coverage RMSE |
+| --- | --- | --- | --- |
+| constant (published) | 2 | 9.73 | 0.251 |
+| $\alpha(t)$ | 5 | 6.30 | 0.202 |
+| $\alpha(t)$ + $\lambda(t)$ | 9 | **1.75** | **0.102** |
+
+Three extra parameters for $\alpha(t)$ buy a 35% cost reduction. That is poor value, and the
+reason is structural: **$\alpha$ is not the bottleneck.**
+
+| $\alpha$ | Coverage reached by 2024 | | $\lambda$ | Coverage reached |
+| --- | --- | --- | --- | --- |
+| 0.035 | 34.1% | | 0.0015 (published) | 51.4% |
+| 0.5 | 51.4% | | 0.05 | 69.4% |
+| 5 | 55.1% | | 0.2 | 87.7% |
+| 50 | 55.6% | | 1.0 | 89.9% |
+| **500** | **55.6%** | | | |
+
+Pushing $\alpha$ to 500 — five hundred treatment initiations per person-year — still caps ART
+coverage at **55.6%**, against the 71% the DRC actually reached. $\alpha$ drains $I_2$; only
+$\lambda$ fills it, and the published $\lambda = 0.0015$/yr is a **mean time to diagnosis of
+667 years**. You cannot treat people you have not diagnosed. Freeing $\lambda$ lifts the
+ceiling immediately.
+
+### But the nine-parameter model is not identified
+
+The last row of the first table fits well. It does not mean anything. Ten random starts:
+
+| Cost | $\beta$ | `alpha_ceiling` | `lam_ceiling` |
+| --- | --- | --- | --- |
+| 2.0615 | 1.2026 | 0.3487 | 1.1070 |
+| 2.0615 | 1.2025 | 0.3470 | 1.2101 |
+| 2.0617 | 1.2028 | 0.3396 | **0.0105** |
+| 3.8492 | 0.5833 | 0.4520 | 2.0000 |
+| 3.8492 | 0.5833 | **1.9964** | 2.0000 |
+
+Rows agreeing on cost to three decimals have `lam_ceiling` differing by a factor of **115**;
+two rows with identical cost differ four-fold in `alpha_ceiling`. Every standard error in that
+fit is `inf`, for exactly this reason. $\beta$ ranges 0.58–1.20 across starts, all far above
+the published 0.15.
+
+So the complete answer, which is not the one this section set out to find:
+
+1. The published constant-rate model **cannot** fit the data — $\lambda$ caps coverage at ~56%.
+2. Time-varying $\alpha$ alone **does not help much** — $\alpha$ was never the binding constraint.
+3. Time-varying $\alpha$ and $\lambda$ **fits well but is not identified** — nine parameters
+   against twenty annual points of two series is not an identified problem, however good the
+   residual looks.
+
+Getting identified parameters out of this needs *more information*, not more flexibility:
+more observed series (the [observability study](#which-data-is-worth-collecting) says which
+ones carry which signal), or informative priors on the rates — which is what the Bayesian
+layer below exists for.
 
 ---
 
@@ -795,7 +883,7 @@ exact ratios are not.
 pytest
 ```
 
-178 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
+198 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
 MCMC chains and add roughly one to three minutes depending on the machine — there is no way to
 test a sampler's convergence diagnostics without actually sampling. The design principle
 throughout is that **no test compares the code to itself** — each one checks against an
@@ -808,6 +896,8 @@ independent derivation or a property that must hold mathematically:
 | Complex-step Jacobian | Central finite differences |
 | Equilibria | The residual $\max\lvert f(y^*)\rvert$ of the vector field |
 | Threshold theorem | Sign of the dominant eigenvalue against sign of $R_0 - 1$, swept across the threshold |
+| Time-varying rates | That the constant path is bit-identical, that the ramp is monotonic from floor to ceiling, and that $R_0$ refuses rather than misleads |
+| The structural ceiling | That a hundredfold rise in $lpha$ moves ART coverage by under 2 points while $\lambda$ is held at its published value |
 | Trajectories | The population balance $dN/dt = \Lambda - \mu N - \delta_1 A - \delta_2 T$, and the invariant region $N \le \Lambda/\mu$ |
 | Sensitivity indices | The exact values $+1$ for $\beta$ and $-\phi/(\mu+\phi)$ for $\phi$ |
 | PRCC implementation | A synthetic problem with a known monotone answer |
@@ -855,7 +945,7 @@ hiv-drc-model/
 │   ├── bayesian.py          The same inverse problem, solved by MCMC (emcee)
 │   ├── plotting.py          Figures (no computation lives here)
 │   └── cli.py               Command-line interface
-├── tests/                   165 tests (178 with doctests)
+├── tests/                   183 tests (198 with doctests)
 │   ├── conftest.py          Shared fixtures
 │   ├── test_model.py        ODE right-hand side and Jacobian
 │   ├── test_simulation.py   Integration, conservation, solver agreement
@@ -864,6 +954,7 @@ hiv-drc-model/
 │   ├── test_sensitivity.py  Local indices and PRCC
 │   ├── test_observables.py  Operators, checked against identities between them
 │   ├── test_realdata.py     Units, gaps, and the Table 2 discrepancy
+│   ├── test_scaleup.py      Time-varying rates, and the structural ceiling
 │   ├── test_synthetic.py    The data generator
 │   ├── test_estimation.py   Recovery, bounds, uncertainty, identifiability
 │   └── test_bayesian.py     Priors, likelihood, split-R-hat, MCMC recovery
@@ -873,7 +964,8 @@ hiv-drc-model/
 │   ├── coverage_study.py    One-off measurement behind the Bayesian coverage table
 │   ├── observability_study.py  Which observation sets identify the rates
 │   ├── fetch_worldbank.py   Downloads the DRC indicators (the only network access)
-│   └── realdata_fit.py      Fitting the real series, window by window
+│   ├── realdata_fit.py      Fitting the real series, window by window
+│   └── scaleup_fit.py       Constant vs alpha(t) vs alpha(t)+lambda(t)
 ├── data/
 │   ├── README.md            Provenance and column definitions
 │   ├── real/                UNAIDS/World Bank snapshot for the DRC

@@ -59,8 +59,9 @@ def rhs(t: float, y: ArrayLike, p: Parameters) -> NDArray:
     Parameters
     ----------
     t:
-        Time in years.  The system is autonomous, so this is unused; it is
-        present because ``solve_ivp`` requires the ``f(t, y)`` signature.
+        Time in years.  Used only when ``p`` configures a treatment scale-up
+        (see :meth:`~hiv_drc.parameters.Parameters.alpha_at`); with constant
+        α the system is autonomous and ``t`` does not enter.
     y:
         State vector ``[S, I1, I2, A, T, R]``.
     p:
@@ -69,9 +70,12 @@ def rhs(t: float, y: ArrayLike, p: Parameters) -> NDArray:
     Notes
     -----
     Only ``+ - * /`` appear below, with no branching, absolute values or
-    comparisons.  That is deliberate: it makes the function analytic in each
-    coordinate, which is what lets :func:`jacobian` use complex-step
-    differentiation to get derivatives to machine precision.
+    comparisons **in the state**.  That is deliberate: it makes the function
+    analytic in each coordinate, which is what lets :func:`jacobian` use
+    complex-step differentiation to get derivatives to machine precision.
+    ``α(t)`` is evaluated at a real ``t`` before any of that arithmetic, so a
+    scale-up does not disturb it - though the Jacobian of a non-autonomous
+    system is only a partial picture; see :func:`jacobian`.
     """
     y = np.asarray(y)
     S, I1, I2, A, T, R = y
@@ -79,20 +83,33 @@ def rhs(t: float, y: ArrayLike, p: Parameters) -> NDArray:
 
     infection = p.beta * S / N * (I1 + p.c * I2 + p.d * A)
 
+    # Constant alpha short-circuits to exactly the published model; a
+    # scale-up makes these two coefficients functions of time.
+    alpha = p.alpha_at(t)
+    lam = p.lam_at(t)
+    a1 = p.sigma1 + lam + p.mu
+    a2 = p.sigma2 + p.mu + alpha
+
     return np.array(
         [
             p.Lambda - infection - p.mu * S - p.phi * S,
-            infection - p.a1 * I1,
-            p.lam * I1 - p.a2 * I2 + p.kappa2 * T,
+            infection - a1 * I1,
+            lam * I1 - a2 * I2 + p.kappa2 * T,
             p.sigma1 * I1 + p.sigma2 * I2 - p.a3 * A,
-            p.alpha * I2 + p.kappa1 * A - p.a4 * T,
+            alpha * I2 + p.kappa1 * A - p.a4 * T,
             p.phi * S - p.mu * R,
         ]
     )
 
 
-def jacobian(state: ArrayLike, p: Parameters) -> NDArray:
+def jacobian(state: ArrayLike, p: Parameters, t: float = 0.0) -> NDArray:
     """Jacobian ∂f/∂y evaluated at ``state``, by complex-step differentiation.
+
+    Under a treatment scale-up the system is non-autonomous and ∂f/∂y depends
+    on ``t`` as well, so ``t`` selects the moment to linearise about.  Note
+    that a Jacobian at one instant no longer carries the stability meaning it
+    has for the autonomous system - there is no fixed point to be stable
+    about while α is still moving.
 
     Perturbing coordinate *j* into the imaginary direction and reading off
     ``imag(f(y + ih·e_j))/h`` gives the derivative with no subtractive
@@ -109,5 +126,5 @@ def jacobian(state: ArrayLike, p: Parameters) -> NDArray:
     for j in range(n):
         perturbed = y.copy()
         perturbed[j] += 1j * h
-        J[:, j] = np.imag(rhs(0.0, perturbed, p)) / h
+        J[:, j] = np.imag(rhs(t, perturbed, p)) / h
     return J
