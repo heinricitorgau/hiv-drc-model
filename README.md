@@ -999,9 +999,12 @@ exact ratios are not.
 pytest
 ```
 
-222 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
+234 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
 MCMC chains and add roughly one to three minutes depending on the machine — there is no way to
-test a sampler's convergence diagnostics without actually sampling. The design principle
+test a sampler's convergence diagnostics without actually sampling. Twelve of the 234 drive
+the [dashboard](#interactive-dashboard) through Streamlit's own `AppTest` harness and are
+skipped unless the `app` extra is installed; they add about a minute, because a fit through
+the UI is a real fit. The design principle
 throughout is that **no test compares the code to itself** — each one checks against an
 independent derivation or a property that must hold mathematically:
 
@@ -1030,6 +1033,7 @@ independent derivation or a property that must hold mathematically:
 | The noise-level prior | Whether the likelihood itself peaks near the true generating noise level, on a grid it was never told |
 | Split-$\hat R$ | Two synthetic chains with a known answer: well-mixed gives $\approx 1$, stuck walkers give $\gg 1$ |
 | MCMC recovery | Reproducibility under a fixed seed; agreement with the independent least-squares estimate; coverage of the truth |
+| The dashboard | The failures that only appear when it is run: a widget bound that rejects the package's own default seed, a label that renders as an empty box because the font lacks the glyph, a stale fit left on screen after the scenario changed |
 
 Docstring examples are executed as part of the run (`--doctest-modules`).
 
@@ -1065,7 +1069,7 @@ hiv-drc-model/
 │   ├── bayesian.py          The same inverse problem, solved by MCMC (emcee)
 │   ├── plotting.py          Figures (no computation lives here)
 │   └── cli.py               Command-line interface
-├── tests/                   206 tests (222 with doctests)
+├── tests/                   218 tests (234 with doctests)
 │   ├── conftest.py          Shared fixtures
 │   ├── test_model.py        ODE right-hand side and Jacobian
 │   ├── test_simulation.py   Integration, conservation, solver agreement
@@ -1078,7 +1082,8 @@ hiv-drc-model/
 │   ├── test_priors.py       Densities, and contraction on cases with known answers
 │   ├── test_synthetic.py    The data generator
 │   ├── test_estimation.py   Recovery, bounds, uncertainty, identifiability
-│   └── test_bayesian.py     Priors, likelihood, split-R-hat, MCMC recovery
+│   ├── test_bayesian.py     Priors, likelihood, split-R-hat, MCMC recovery
+│   └── test_app.py          The dashboard, driven through Streamlit's AppTest
 ├── notebooks/
 │   └── 01_inverse_problem.ipynb   Narrated walkthrough of the estimation pipeline
 ├── scripts/
