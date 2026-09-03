@@ -195,7 +195,15 @@ For development (adds pytest and ruff):
 pip install -e ".[dev]"
 ```
 
-Dependencies are only `numpy`, `scipy` and `matplotlib`.
+For the [interactive dashboard](#interactive-dashboard) (adds streamlit):
+
+```bash
+pip install -e ".[app]"
+```
+
+Dependencies are only `numpy`, `scipy`, `matplotlib` and `emcee`. Streamlit is needed for
+`app.py` alone and is kept in the `app` extra, so importing `hiv_drc` never pulls in a web
+framework.
 
 ---
 
@@ -348,6 +356,38 @@ print(posterior.summary())
 
 `eta_A` and `eta_T` are not epidemiological parameters — they are each series' own inferred
 relative measurement-noise level, fitted jointly rather than assumed.
+
+### Interactive dashboard
+
+`app.py` puts the model behind a browser UI, for exploring scenarios without writing code:
+
+```bash
+pip install -e ".[app]"
+streamlit run app.py
+```
+
+Two tabs. **Dynamics** moves $\beta$, $\alpha$ and $\phi$ on sliders and recomputes $R_0$ from
+the closed form on every change, alongside its $R_1/R_2/R_3$ decomposition and the trajectory
+of $I_1$, $I_2$, $A$ and $T$. **The inverse problem** generates noisy $A$ and $T$ from the
+current parameters, recovers them with `estimate_parameters`, and shows the Wald intervals
+next to the truth the estimator was never given.
+
+The dashboard computes nothing itself: every number on screen comes from `DRC_2020`,
+`simulate`, `reproduction_number`, `generate_observations` and `estimate_parameters`. It is a
+view, not a second implementation, so it cannot drift from the tested one.
+
+$S$ and $R$ are hidden by default rather than drawn on a secondary axis — $S$ is about 88
+million and $A$ about 0.05 million, and two y-scales on one plot make the slopes
+incomparable. A checkbox adds them as a second panel sharing the time axis.
+
+The parameter selector is worth using on more than its default. At the sliders' baseline and
+5% noise, fitting $\beta$ and $\alpha$ recovers them to +10.5% and +6.6% at a cost of 0.1649.
+Adding $\phi$ to the same fit moves the cost to 0.1642 — nothing — while $\beta$ goes to
+$1.00 \pm 21.5$ and $\phi$ to its upper bound at $1.00 \pm 23.7$, both intervals straddling
+zero. The residual barely noticed; the parameters stopped meaning anything. That is [the same
+non-identifiability](#but-the-nine-parameter-model-is-not-identified) the scale-up study runs
+into, reachable from a dropdown, and it is why the correlation and the standard errors sit
+beside the estimates rather than the point values alone.
 
 ---
 
@@ -1053,6 +1093,7 @@ hiv-drc-model/
 │   ├── real/                UNAIDS/World Bank snapshot for the DRC
 │   └── synthetic/           Generated observations (`--data` writes here)
 ├── figures/                 Generated output (git-ignored)
+├── app.py                   Streamlit dashboard — presentation only, no computation
 ├── pyproject.toml
 ├── requirements.txt
 ├── requirements-dev.txt
