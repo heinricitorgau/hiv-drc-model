@@ -376,6 +376,10 @@ The dashboard computes nothing itself: every number on screen comes from `DRC_20
 `simulate`, `reproduction_number`, `generate_observations` and `estimate_parameters`. It is a
 view, not a second implementation, so it cannot drift from the tested one.
 
+The figures are labelled in Chinese where a CJK font is installed and in English where
+one is not — matplotlib does not fail on a missing glyph, it draws a blank box, so on a bare
+Linux container every label would silently become one.
+
 $S$ and $R$ are hidden by default rather than drawn on a secondary axis — $S$ is about 88
 million and $A$ about 0.05 million, and two y-scales on one plot make the slopes
 incomparable. A checkbox adds them as a second panel sharing the time axis.
@@ -999,9 +1003,9 @@ exact ratios are not.
 pytest
 ```
 
-234 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
+235 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
 MCMC chains and add roughly one to three minutes depending on the machine — there is no way to
-test a sampler's convergence diagnostics without actually sampling. Twelve of the 234 drive
+test a sampler's convergence diagnostics without actually sampling. Thirteen of the 235 drive
 the [dashboard](#interactive-dashboard) through Streamlit's own `AppTest` harness; they add
 about a minute, because a fit through the UI is a real fit. Streamlit is in both the `dev`
 and the `app` extra, so CI runs them; on an install that has neither, the module skips with a
@@ -1070,7 +1074,7 @@ hiv-drc-model/
 │   ├── bayesian.py          The same inverse problem, solved by MCMC (emcee)
 │   ├── plotting.py          Figures (no computation lives here)
 │   └── cli.py               Command-line interface
-├── tests/                   218 tests (234 with doctests)
+├── tests/                   219 tests (235 with doctests)
 │   ├── conftest.py          Shared fixtures
 │   ├── test_model.py        ODE right-hand side and Jacobian
 │   ├── test_simulation.py   Integration, conservation, solver agreement

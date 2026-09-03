@@ -53,15 +53,6 @@ LABELS = {
     "R": "R — 行為改變",
 }
 
-#: 圖上用的標籤。中文字型（如微軟正黑體）沒有下標字符 ₁ ₂，畫出來會變成豆腐方塊；
-#: mathtext（$I_1$）雖然排得出下標，卻會把整段文字丟給數學字型，中文反而不見。
-#: 圖裡因此一律用 ASCII 的 I1/I2，網頁文字則保留漂亮的下標。
-PLOT_LABELS = {
-    **LABELS,
-    "I1": "I1 — 感染但未知情",
-    "I2": "I2 — 感染且知情",
-}
-
 #: 固定的「實體 → 顏色」對應。同一個腔體在任何一張圖裡都是同一個顏色，
 #: 圖例增減也不會讓顏色重新洗牌。
 COLORS = {
@@ -95,15 +86,58 @@ CJK_FONTS = (
 )
 
 
-def configure_fonts() -> None:
-    """把可用的中文字型排到 matplotlib 的字型序列最前面。"""
+def configure_fonts() -> bool:
+    """把可用的中文字型排到 matplotlib 的字型序列最前面。
+
+    回傳是否真的找到中文字型。找不到的話（多數 Linux 伺服器、Streamlit Cloud
+    的容器都是這樣）圖上的文字必須換成英文——DejaVu Sans 畫不出漢字，
+    matplotlib 不會報錯，只會安靜地把每個字換成一個空白方塊。
+    """
     available = {font.name for font in font_manager.fontManager.ttflist}
     chosen = [name for name in CJK_FONTS if name in available]
     plt.rcParams["font.sans-serif"] = [*chosen, "DejaVu Sans"]
     plt.rcParams["axes.unicode_minus"] = False  # 用 ASCII 減號，避免負號變方塊
+    return bool(chosen)
 
 
-configure_fonts()
+#: 這台機器畫得出中文嗎？網頁文字不受影響（瀏覽器有自己的字型），只有圖會換。
+HAS_CJK_FONT = configure_fonts()
+
+#: 圖上用的標籤。兩件事讓它和 LABELS 不同：
+#: 中文字型沒有下標字符 ₁ ₂（會變豆腐方塊，而 mathtext 的 $I_1$ 又會把中文
+#: 送進數學字型裡消失），所以圖上一律用 ASCII 的 I1/I2；
+#: 而沒有中文字型時，整組標籤改用英文。
+if HAS_CJK_FONT:
+    PLOT_LABELS = {
+        **LABELS,
+        "I1": "I1 — 感染但未知情",
+        "I2": "I2 — 感染且知情",
+    }
+    PLOT_TEXT = {
+        "time": "時間（年）",
+        "population": "人口（百萬人）",
+        "dynamics_title": "感染相關腔體的時間演變",
+        "inverse_title": "合成觀測資料與最小平方擬合",
+        "observed": "{label}（觀測）",
+        "fitted": "{label}（擬合）",
+    }
+else:
+    PLOT_LABELS = {
+        "S": "S — susceptible",
+        "I1": "I1 — infected, unaware",
+        "I2": "I2 — infected, aware",
+        "A": "A — symptomatic (AIDS)",
+        "T": "T — on treatment",
+        "R": "R — changed behaviour",
+    }
+    PLOT_TEXT = {
+        "time": "Time (years)",
+        "population": "Population (millions)",
+        "dynamics_title": "Infected compartments over time",
+        "inverse_title": "Synthetic observations and the least-squares fit",
+        "observed": "{label} (observed)",
+        "fitted": "{label} (fitted)",
+    }
 
 #: 論文基準情境的 R₀，作為滑桿調整後的比較基準。
 BASELINE_R0 = float(reproduction_number(DRC_2020).R0)
@@ -189,8 +223,12 @@ def plot_trajectory(series: dict[str, np.ndarray], show_latent: bool, log_scale:
         # 字型裡不存在，會印出一個空心方塊。改用純文字格式，避開整條 mathtext 路徑。
         ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
         ax.yaxis.set_minor_formatter(NullFormatter())
-    style_axes(ax, "" if ax_latent is not None else "時間（年）", "人口（百萬人）")
-    ax.set_title("感染相關腔體的時間演變", color="#0b0b0b", fontsize=12, loc="left")
+    style_axes(
+        ax,
+        "" if ax_latent is not None else PLOT_TEXT["time"],
+        PLOT_TEXT["population"],
+    )
+    ax.set_title(PLOT_TEXT["dynamics_title"], color="#0b0b0b", fontsize=12, loc="left")
     ax.legend(frameon=False, fontsize=9, labelcolor=TEXT_MUTED, ncols=2)
 
     if ax_latent is not None:
@@ -198,7 +236,7 @@ def plot_trajectory(series: dict[str, np.ndarray], show_latent: bool, log_scale:
             ax_latent.plot(
                 t, series[name], label=PLOT_LABELS[name], color=COLORS[name], linewidth=2
             )
-        style_axes(ax_latent, "時間（年）", "人口（百萬人）")
+        style_axes(ax_latent, PLOT_TEXT["time"], PLOT_TEXT["population"])
         ax_latent.legend(frameon=False, fontsize=9, labelcolor=TEXT_MUTED, ncols=2)
 
     fig.tight_layout()
@@ -217,7 +255,7 @@ def plot_inverse(observations, fit_result):
             edgecolor="#ffffff",
             linewidth=0.8,
             zorder=3,
-            label=f"{PLOT_LABELS[name]}（觀測）",
+            label=PLOT_TEXT["observed"].format(label=PLOT_LABELS[name]),
         )
     if fit_result is not None:
         solution = fit_result.solution
@@ -228,10 +266,10 @@ def plot_inverse(observations, fit_result):
                 color=COLORS[name],
                 linewidth=2,
                 zorder=2,
-                label=f"{PLOT_LABELS[name]}（擬合）",
+                label=PLOT_TEXT["fitted"].format(label=PLOT_LABELS[name]),
             )
-    style_axes(ax, "時間（年）", "人口（百萬人）")
-    ax.set_title("合成觀測資料與最小平方擬合", color="#0b0b0b", fontsize=12, loc="left")
+    style_axes(ax, PLOT_TEXT["time"], PLOT_TEXT["population"])
+    ax.set_title(PLOT_TEXT["inverse_title"], color="#0b0b0b", fontsize=12, loc="left")
     ax.legend(frameon=False, fontsize=9, labelcolor=TEXT_MUTED, ncols=2)
     fig.tight_layout()
     return fig

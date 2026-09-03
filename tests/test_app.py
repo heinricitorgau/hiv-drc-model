@@ -15,10 +15,14 @@ running the thing rather than by reading it:
   above ``max_value`` - a crash on first load, not a warning;
 * Microsoft JhengHei has no subscript glyphs, so ``I₁`` and ``I₂`` rendered as
   empty boxes, and switching the y-axis to log brought the same failure back
-  through the tick formatter's mathtext minus sign.
+  through the tick formatter's mathtext minus sign;
+* a machine with no CJK font at all - a bare Ubuntu runner, or the container
+  Streamlit Cloud deploys into - drew every Chinese label on every figure as a
+  box.  That one was found by this file, on CI, after the app had already been
+  looked at on a Windows desktop where it could not happen.
 
-Streamlit lives in the optional ``app`` extra, so this module skips when it is
-absent.  ``pip install -e ".[app]"`` turns it on.
+Streamlit comes with both the ``dev`` and the ``app`` extra; with neither
+installed, this module skips rather than fails.
 """
 
 from __future__ import annotations
@@ -75,6 +79,20 @@ def checkbox(at, fragment: str):
     return matches[0]
 
 
+def missing_glyphs(caught, caplog) -> str:
+    """Every complaint about a character the font could not draw, as one string.
+
+    Missing glyphs arrive on two channels: ordinary text goes through
+    ``warnings``, while mathtext - which the log-scale tick labels used to
+    use - goes through matplotlib's logger.  Neither is an exception; the
+    figure renders with blank boxes and nothing fails.
+    """
+    complaints = [str(w.message) for w in caught] + [r.getMessage() for r in caplog.records]
+    return "\n".join(
+        c for c in complaints if "missing from font" in c or "does not have a glyph" in c
+    )
+
+
 def fit_table(at) -> str:
     """The rendered Wald-interval table, or ``""`` when no fit is displayed."""
     tables = [block.value for block in at.markdown if "Wald" in block.value]
@@ -127,13 +145,7 @@ def test_the_extremes_of_every_slider_still_integrate():
 
 
 def test_every_glyph_the_figures_ask_for_exists_in_the_chosen_font(caplog):
-    """Both panels, log axis included, render without falling back to boxes.
-
-    Missing glyphs are not errors - matplotlib substitutes a blank box and
-    carries on, so this is invisible unless something looks for the warning.
-    Text goes through ``warnings``; mathtext, which the log-scale tick labels
-    used to use, goes through matplotlib's logger.  Watch both.
-    """
+    """Both panels, log axis included, render without falling back to boxes."""
     at = run_app()
     with caplog.at_level(logging.WARNING, logger="matplotlib"), \
             warnings.catch_warnings(record=True) as caught:
@@ -142,9 +154,35 @@ def test_every_glyph_the_figures_ask_for_exists_in_the_chosen_font(caplog):
         checkbox(at, "對數").check().run()
     assert not at.exception, at.exception
 
-    complaints = [str(w.message) for w in caught] + [r.getMessage() for r in caplog.records]
-    missing = [c for c in complaints if "missing from font" in c or "does not have a glyph" in c]
-    assert not missing, "\n".join(missing)
+    missing = missing_glyphs(caught, caplog)
+    assert not missing, missing
+
+
+def test_the_figures_drop_to_ascii_on_a_machine_with_no_chinese_font(monkeypatch, caplog):
+    """The Linux case, reproduced here rather than waited for in CI.
+
+    A bare Ubuntu runner - and the container Streamlit Cloud deploys into -
+    ships DejaVu Sans and no CJK font at all, so every Chinese label on the
+    figures becomes an empty box.  matplotlib does not raise for that; it
+    substitutes and carries on.  Restricting the font list to DejaVu is what
+    that machine looks like from inside the process.
+    """
+    from matplotlib import font_manager
+
+    dejavu = [f for f in font_manager.fontManager.ttflist if f.name.startswith("DejaVu")]
+    assert dejavu, "matplotlib ships DejaVu Sans; something is wrong with this environment"
+    monkeypatch.setattr(font_manager.fontManager, "ttflist", dejavu)
+
+    with caplog.at_level(logging.WARNING, logger="matplotlib"), \
+            warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        at = run_app()
+        # The widgets stay in Chinese - they are HTML, and the browser has
+        # its own fonts.  Only what matplotlib draws has to change.
+        checkbox(at, "對數").check().run()
+    assert not at.exception, at.exception
+    missing = missing_glyphs(caught, caplog)
+    assert not missing, missing
 
 
 # -- the inverse problem --------------------------------------------------
