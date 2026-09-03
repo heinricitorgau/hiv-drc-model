@@ -45,6 +45,8 @@ dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
     "ruff>=0.4",
+    # tests/test_app.py drives the dashboard, and skips without this.
+    "streamlit>=1.30",
 ]
 # The Streamlit dashboard in app.py. Kept out of the base dependencies so that
 # importing hiv_drc never drags in a web framework.

@@ -819,7 +819,7 @@ a well-identified fit if you only look at the credible intervals.
 
 The number that tells them apart is the prior-to-posterior contraction,
 
-$$\text{contraction} = 1 - \frac{\operatorname{sd}(\text{posterior})}{\operatorname{sd}(\text{prior})}$$
+$$\text{contraction} = 1 - \frac{\mathrm{sd}(\text{posterior})}{\mathrm{sd}(\text{prior})}$$
 
 Near 1 the data determined the parameter; near 0 the posterior is the prior repeated back;
 negative means the data pulled against the prior hard enough to widen the answer.
@@ -1002,9 +1002,10 @@ pytest
 234 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
 MCMC chains and add roughly one to three minutes depending on the machine — there is no way to
 test a sampler's convergence diagnostics without actually sampling. Twelve of the 234 drive
-the [dashboard](#interactive-dashboard) through Streamlit's own `AppTest` harness and are
-skipped unless the `app` extra is installed; they add about a minute, because a fit through
-the UI is a real fit. The design principle
+the [dashboard](#interactive-dashboard) through Streamlit's own `AppTest` harness; they add
+about a minute, because a fit through the UI is a real fit. Streamlit is in both the `dev`
+and the `app` extra, so CI runs them; on an install that has neither, the module skips with a
+message rather than failing. The design principle
 throughout is that **no test compares the code to itself** — each one checks against an
 independent derivation or a property that must hold mathematically:
 
@@ -1039,7 +1040,7 @@ Docstring examples are executed as part of the run (`--doctest-modules`).
 
 A note on the Jacobian: it is computed by **complex-step differentiation**, perturbing each
 coordinate into the imaginary direction and reading off
-$\operatorname{Im} f(y + ih\mathbf{e}_j)/h$. Because there is no subtraction, there is no
+$\mathrm{Im}\, f(y + ih\mathbf{e}_j)/h$. Because there is no subtraction, there is no
 cancellation error, so $h$ can be taken as small as $10^{-200}$ and the result is accurate to
 machine precision. This works only because the right-hand side is analytic — it uses nothing
 but arithmetic, with no branching or absolute values. That constraint is documented in
