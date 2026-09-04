@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import streamlit as st  # noqa: E402
 from matplotlib import font_manager  # noqa: E402
-from matplotlib.ticker import FuncFormatter, NullFormatter  # noqa: E402
+from matplotlib.ticker import FuncFormatter, MaxNLocator, NullFormatter  # noqa: E402
 
 # 若使用者是直接從原始碼目錄執行（尚未 pip install -e .），把 src/ 補進匯入路徑。
 # 在 git worktree 中這一步也確保載入的是「本目錄」的 hiv_drc，而非主 checkout 的版本。
@@ -33,11 +33,18 @@ if _SRC.is_dir() and str(_SRC) not in sys.path:
 
 from hiv_drc import (  # noqa: E402
     DRC_2020,
+    apply,
     estimate_parameters,
     generate_observations,
+    initial_state_from_data,
+    load_worldbank,
     reproduction_number,
     simulate,
 )
+
+# 時變參數之下 R₀ 沒有定義，reproduction_number() 會直接拋錯——這是套件刻意的
+# 設計，不是 bug。要看某個時刻凍結下來的瞬時值得走這一個，它不在頂層 __all__ 裡。
+from hiv_drc.reproduction import reproduction_number_at  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # 常數：標籤、配色與版面設定（純呈現層，與模型無關）
@@ -56,6 +63,8 @@ LABELS = {
 #: 固定的「實體 → 顏色」對應。同一個腔體在任何一張圖裡都是同一個顏色，
 #: 圖例增減也不會讓顏色重新洗牌。
 COLORS = {
+    "plhiv": "#4a3aa7",         # 紫 —— 真實數據頁的感染總數
+    "art_coverage": "#008300",  # 綠 —— 真實數據頁的治療涵蓋率
     "A": "#2a78d6",   # 藍
     "T": "#eb6834",   # 橘
     "I1": "#1baf7a",  # 青綠
@@ -120,6 +129,14 @@ if HAS_CJK_FONT:
         "inverse_title": "合成觀測資料與最小平方擬合",
         "observed": "{label}（觀測）",
         "fitted": "{label}（擬合）",
+        # Tab 3：真實數據
+        "calendar_year": "年份",
+        "plhiv_axis": "感染人數（百萬人）",
+        "coverage_axis": "ART 涵蓋率（%）",
+        "plhiv_title": "感染總數 —— UNAIDS 實測 vs. 模型",
+        "coverage_title": "ART 治療涵蓋率 —— UNAIDS 實測 vs. 模型",
+        "real_observed": "UNAIDS 實測",
+        "model": "模型模擬",
     }
 else:
     PLOT_LABELS = {
@@ -137,6 +154,14 @@ else:
         "inverse_title": "Synthetic observations and the least-squares fit",
         "observed": "{label} (observed)",
         "fitted": "{label} (fitted)",
+        # Tab 3
+        "calendar_year": "Year",
+        "plhiv_axis": "People living with HIV (millions)",
+        "coverage_axis": "ART coverage (%)",
+        "plhiv_title": "PLHIV — UNAIDS estimates vs. the model",
+        "coverage_title": "ART coverage — UNAIDS estimates vs. the model",
+        "real_observed": "UNAIDS estimate",
+        "model": "Model",
     }
 
 #: 論文基準情境的 R₀，作為滑桿調整後的比較基準。
@@ -180,6 +205,93 @@ def cached_observations(beta: float, alpha: float, phi: float, noise: float, see
     return generate_observations(
         p=make_parameters(beta, alpha, phi), noise=noise, seed=seed
     )
+
+
+# -- Tab 3：真實數據與時變參數 ----------------------------------------------
+
+#: UNAIDS／World Bank 的 DRC 快照。load_worldbank 的預設路徑是相對的，
+#: 而 Streamlit 的工作目錄未必是專案根目錄，所以這裡自己組絕對路徑。
+REAL_DATA_PATH = Path(__file__).resolve().parent / "data" / "real" / "drc_worldbank.csv"
+
+
+@st.cache_data(show_spinner=False)
+def cached_real_data(first_year: int):
+    """讀入真實觀測（plhiv 與 art_coverage）與年份、總人口等環境變數。
+
+    這份資料是committed 的 CSV 快照，不連網路——下載是 scripts/fetch_worldbank.py
+    的事，這樣同一份圖表任何時候重跑都會得到同一個答案。
+    """
+    return load_worldbank(path=REAL_DATA_PATH, first_year=first_year)
+
+
+def scaleup_parameters(
+    beta: float,
+    alpha: float,
+    phi: float,
+    enabled: bool,
+    alpha_ceiling: float,
+    alpha_midpoint: float,
+    alpha_rate: float,
+    lam_ceiling: float,
+    lam_midpoint: float,
+    lam_rate: float,
+):
+    """側邊欄的常數參數，加上（可選的）α 與 λ logistic 擴展。
+
+    ``enabled`` 為 False 時完全不碰那些欄位，參數組維持常係數——也就是論文
+    原始的模型，連 R₀ 與平衡點的理論都仍然適用。
+    """
+    p = make_parameters(beta, alpha, phi)
+    if not enabled:
+        return p
+    return p.replace(
+        alpha_ceiling=alpha_ceiling,
+        alpha_midpoint=alpha_midpoint,
+        alpha_rate=alpha_rate,
+        lam_ceiling=lam_ceiling,
+        lam_midpoint=lam_midpoint,
+        lam_rate=lam_rate,
+    )
+
+
+@st.cache_data(show_spinner=False)
+def cached_real_simulation(
+    beta: float,
+    alpha: float,
+    phi: float,
+    enabled: bool,
+    alpha_ceiling: float,
+    alpha_midpoint: float,
+    alpha_rate: float,
+    lam_ceiling: float,
+    lam_midpoint: float,
+    lam_rate: float,
+    first_year: int,
+) -> dict[str, np.ndarray]:
+    """從資料的第一年出發積分，回傳與觀測同名的兩條模型曲線。
+
+    初始狀態不用論文 Table 2，而是用 initial_state_from_data 從當年的
+    PLHIV、ART 涵蓋率與總人口重建——Table 2 標著 2020，但它的治療腔體
+    對應的是 2013 年的涵蓋率，而 T 正是識別 α 的那條序列。
+    """
+    observations, context = cached_real_data(first_year)
+    y0 = initial_state_from_data(
+        plhiv=float(observations.values["plhiv"][0]),
+        art_coverage=float(observations.values["art_coverage"][0]),
+        population=float(context["population"][0]),
+    )
+    p = scaleup_parameters(
+        beta, alpha, phi, enabled,
+        alpha_ceiling, alpha_midpoint, alpha_rate,
+        lam_ceiling, lam_midpoint, lam_rate,
+    )
+    span = (0.0, float(observations.t[-1]))
+    solution = simulate(p, y0=y0, t_span=span, n_points=401)
+    # apply() 走的是套件的觀測算子登錄表，所以 plhiv 與 art_coverage 的定義
+    # 和資料端、擬合端完全是同一份，不會在這裡分岔。
+    modelled = apply(solution, observations.names)
+    return {"t": solution.t, **{name: modelled[name] for name in observations.names},
+            "y0": y0}
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +383,54 @@ def plot_inverse(observations, fit_result):
     style_axes(ax, PLOT_TEXT["time"], PLOT_TEXT["population"])
     ax.set_title(PLOT_TEXT["inverse_title"], color="#0b0b0b", fontsize=12, loc="left")
     ax.legend(frameon=False, fontsize=9, labelcolor=TEXT_MUTED, ncols=2)
+    fig.tight_layout()
+    return fig
+
+
+def plot_real_data(years, observed, model_years, model, key: str, percent: bool):
+    """真實觀測（散點）與模型曲線（折線）疊在同一組座標軸上。
+
+    一張圖只有一個量，觀測與模型用「點 vs. 線」區分而不是用兩種顏色——
+    它們是同一件事的兩個來源，不是兩個不同的序列。
+    """
+    scale = 100.0 if percent else 1.0
+    fig, ax = plt.subplots(figsize=(9, 3.6))
+    ax.plot(
+        model_years,
+        np.asarray(model) * scale,
+        color=COLORS[key],
+        linewidth=2,
+        zorder=2,
+        label=PLOT_TEXT["model"],
+    )
+    ax.scatter(
+        years,
+        np.asarray(observed) * scale,
+        s=32,
+        color=TEXT_MUTED,
+        edgecolor="#ffffff",
+        linewidth=0.8,
+        zorder=3,
+        label=PLOT_TEXT["real_observed"],
+    )
+    style_axes(
+        ax,
+        PLOT_TEXT["calendar_year"],
+        PLOT_TEXT["coverage_axis"] if percent else PLOT_TEXT["plhiv_axis"],
+    )
+    ax.set_title(
+        PLOT_TEXT["coverage_title"] if percent else PLOT_TEXT["plhiv_title"],
+        color="#0b0b0b",
+        fontsize=12,
+        loc="left",
+    )
+    # 橫軸是年份，刻度必須落在整數年上：預設的 locator 會挑 2.5 年的間隔，
+    # 再被格式化成整數，於是 2007.5 顯示成「2008」——看起來合理，其實是錯的。
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True, steps=[1, 2, 5, 10]))
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.0f}"))
+    if percent:
+        ax.set_ylim(bottom=0.0)
+    ax.legend(frameon=False, fontsize=9, labelcolor=TEXT_MUTED)
     fig.tight_layout()
     return fig
 
@@ -380,8 +540,8 @@ parameters = make_parameters(beta, alpha, phi)
 # 版面：主畫面
 # ---------------------------------------------------------------------------
 
-tab_dynamics, tab_inverse = st.tabs(
-    ["📈 疫情軌跡與公衛沙盒", "🔍 反問題與參數估計"]
+tab_dynamics, tab_inverse, tab_real = st.tabs(
+    ["📈 疫情軌跡與公衛沙盒", "🔍 反問題與參數估計", "🌍 真實數據與政策推廣"]
 )
 
 # --- Tab 1：疫情軌跡 --------------------------------------------------------
@@ -583,6 +743,169 @@ with tab_inverse:
                 "資料完全無法約束它（例如 β 被推到下界 0，感染項整個消失）。"
                 "此時的 Wald 區間不具意義。"
             )
+
+# --- Tab 3：真實數據與政策推廣 --------------------------------------------
+
+with tab_real:
+    st.markdown(
+        "前兩頁的資料都是模型自己生成的，答案早就知道。這一頁換成 **UNAIDS／World Bank "
+        "實際發布的剛果民主共和國序列**：感染總數 `plhiv` 與治療涵蓋率 `art_coverage`。"
+        "兩者都是套件裡登錄好的觀測算子，不是單一腔體——沒有任何一個腔體對應「涵蓋率」。"
+    )
+
+    first_year = st.slider(
+        "資料起始年份", min_value=1990, max_value=2015, value=2005, step=1,
+        key="first_year",
+        help="ART 涵蓋率要到 2000 年才有發布，而且在 2000 年代中期以前近乎為零。",
+    )
+
+    try:
+        observations, context = cached_real_data(int(first_year))
+    except (FileNotFoundError, ValueError) as error:
+        st.error(f"讀不到真實數據：{error}")
+        st.stop()
+
+    years = np.asarray(context["year"])
+    coverage_observed = np.asarray(observations.values["art_coverage"])
+
+    st.warning(
+        f"**真實世界的 ART 涵蓋率從 {years[0]:.0f} 年的 "
+        f"{coverage_observed[0]:.0%} 一路衝到 {years[-1]:.0f} 年的 "
+        f"{coverage_observed[-1]:.0%}。** 常係數模型畫不出這種 S 形曲線——它的 α "
+        "是一個固定不動的速率，只能給出單調趨近某個水平的軌跡。這正是引入時間變動"
+        "參數（time-varying rates）的理由：把政策推廣本身放進模型裡。"
+    )
+
+    st.subheader("時間變動參數沙盒")
+    scaleup_on = st.checkbox(
+        "啟用 Logistic 政策擴展（取消勾選＝常數參數，論文原始設定）",
+        value=False,
+        key="scaleup_on",
+        help="關閉時 α 與 λ 都是常數，系統維持自治，R₀ 與平衡點的理論仍然成立；"
+        "開啟後兩者隨時間走 logistic 曲線，系統變成非自治的。",
+    )
+
+    col_alpha, col_lam = st.columns(2)
+    with col_alpha:
+        st.markdown("**α(t) —— 治療推廣**")
+        alpha_ceiling = st.slider(
+            "α 上限（ceiling）", min_value=0.0, max_value=2.0, value=0.2, step=0.01,
+            key="alpha_ceiling", disabled=not scaleup_on,
+            help="推廣結束後 α 穩定下來的速率。預設值刻意調成讓 2024 年的涵蓋率"
+            "幾乎正中實測的 71% —— 然後看看感染總數差多少。",
+        )
+        alpha_midpoint = st.slider(
+            "α 推廣中點（年）", min_value=0.0, max_value=40.0, value=10.0, step=0.5,
+            key="alpha_midpoint", disabled=not scaleup_on,
+            help="從資料起始年算起第幾年通過半程。",
+        )
+        alpha_rate = st.slider(
+            "α 推廣速率", min_value=0.0, max_value=2.0, value=0.4, step=0.05,
+            key="alpha_rate", disabled=not scaleup_on,
+            help="數字越大，政策轉折越陡。",
+        )
+    with col_lam:
+        st.markdown("**λ(t) —— 篩檢診斷推廣**")
+        lam_ceiling = st.slider(
+            "λ 上限（ceiling）", min_value=0.0, max_value=2.0, value=0.3, step=0.01,
+            key="lam_ceiling", disabled=not scaleup_on,
+            help="治療追不上診斷：α 把人帶出 I₂，但只有 λ 能把人放進去。",
+        )
+        lam_midpoint = st.slider(
+            "λ 推廣中點（年）", min_value=0.0, max_value=40.0, value=8.0, step=0.5,
+            key="lam_midpoint", disabled=not scaleup_on,
+        )
+        lam_rate = st.slider(
+            "λ 推廣速率", min_value=0.0, max_value=2.0, value=0.4, step=0.05,
+            key="lam_rate", disabled=not scaleup_on,
+        )
+
+    with st.spinner("正在以真實初始狀態積分…"):
+        simulated = cached_real_simulation(
+            beta, alpha, phi, bool(scaleup_on),
+            float(alpha_ceiling), float(alpha_midpoint), float(alpha_rate),
+            float(lam_ceiling), float(lam_midpoint), float(lam_rate),
+            int(first_year),
+        )
+    model_years = years[0] + simulated["t"]
+
+    # 末年的模型值 vs. 實測值——把「差多少」講成數字，而不是只讓人看線。
+    model_coverage_end = float(np.interp(observations.t[-1], simulated["t"],
+                                         simulated["art_coverage"]))
+    model_plhiv_end = float(np.interp(observations.t[-1], simulated["t"],
+                                      simulated["plhiv"]))
+    metric_cov, metric_plhiv, metric_r0 = st.columns(3)
+    metric_cov.metric(
+        f"{years[-1]:.0f} 年 ART 涵蓋率（模型）",
+        f"{model_coverage_end:.1%}",
+        delta=f"{(model_coverage_end - coverage_observed[-1]) * 100:+.1f} 個百分點 vs. 實測",
+        delta_color="off",
+    )
+    metric_plhiv.metric(
+        f"{years[-1]:.0f} 年感染總數（模型）",
+        f"{model_plhiv_end:.4f}",
+        delta=f"{model_plhiv_end - float(observations.values['plhiv'][-1]):+.4f} vs. 實測",
+        delta_color="off",
+    )
+    parameters_real = scaleup_parameters(
+        beta, alpha, phi, bool(scaleup_on),
+        float(alpha_ceiling), float(alpha_midpoint), float(alpha_rate),
+        float(lam_ceiling), float(lam_midpoint), float(lam_rate),
+    )
+    r0_start = reproduction_number_at(parameters_real, 0.0).R0
+    r0_end = reproduction_number_at(parameters_real, float(observations.t[-1])).R0
+    metric_r0.metric(
+        "R₀(t) 起點 → 終點",
+        f"{r0_start:.3f} → {r0_end:.3f}",
+        help="時變參數下 R₀ 不是門檻定理，只是「此刻政策推得多用力」的診斷值："
+        "系統從來沒有在任何一個凍結狀態停留夠久，讓對應的平衡點發生作用。",
+    )
+
+    figure = plot_real_data(
+        years, observations.values["plhiv"], model_years, simulated["plhiv"],
+        key="plhiv", percent=False,
+    )
+    st.pyplot(figure)
+    plt.close(figure)
+
+    figure = plot_real_data(
+        years, coverage_observed, model_years, simulated["art_coverage"],
+        key="art_coverage", percent=True,
+    )
+    st.pyplot(figure)
+    plt.close(figure)
+
+    with st.expander("初始狀態是怎麼來的？（以及哪些部分是假設）"):
+        y0 = simulated["y0"]
+        st.markdown(
+            f"""
+初始狀態不取論文 Table 2，而是由 `initial_state_from_data` 從 {years[0]:.0f} 年的實測值重建：
+感染總數 {float(observations.values['plhiv'][0]):.4f} 百萬、ART 涵蓋率
+{coverage_observed[0]:.1%}、總人口 {float(context['population'][0]):.2f} 百萬。
+
+| 腔體 | S | I₁ | I₂ | A | T | R |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 百萬人 | {y0[0]:.4f} | {y0[1]:.4f} | {y0[2]:.4f} | {y0[3]:.4f} | {y0[4]:.4f} | {y0[5]:.4f} |
+
+資料只釘得住三個數字（總人口、感染總數、涵蓋率），模型卻需要六個。**未治療感染者
+如何拆成 I₁／I₂／A、以及 R 有多少人，是假設而不是量測**——套件把它們做成
+`untreated_split` 與 `behaviour_changed` 兩個明擺著的參數，這裡用的是論文的預設拆法。
+
+順帶一提，Table 2 標示為 2020 年，但它的 ART 涵蓋率 15.9% 其實對應 2013 年（14%），
+而 T 正是識別治療速率 α 的那條序列——從 Table 2 出發做真實數據擬合，等於把這個誤差
+直接灌進你想估計的那個參數裡。
+            """
+        )
+
+    st.info(
+        "把上面的核取方塊打開再關掉，比較兩條曲線：常數 α 只能單調趨近某個水平，"
+        "而實測的涵蓋率是先慢、後急、再平的 S 形。\n\n"
+        "**但請同時看兩張圖。** 預設的 logistic 參數讓 2024 年的 ART 涵蓋率幾乎"
+        "正中實測值，而同一組參數下的感染總數只有實測的三分之一左右——**對上一條序列"
+        "不等於模型是對的**。README 的「Meeting real data」與「Time-varying rates」"
+        "兩節記錄了完整的量化結果，包括那個負面發現：光讓 α 隨時間變還不夠，"
+        "因為瓶頸其實在診斷率 λ 而不是治療率——治不了還沒被診斷出來的人。"
+    )
 
 st.divider()
 st.caption(

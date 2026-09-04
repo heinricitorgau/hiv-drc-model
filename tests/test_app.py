@@ -93,6 +93,23 @@ def missing_glyphs(caught, caplog) -> str:
     )
 
 
+def metric(at, fragment: str):
+    """The metric whose label contains ``fragment``."""
+    matches = [m for m in at.metric if fragment in m.label]
+    assert matches, f"no metric matching {fragment!r} among {[m.label for m in at.metric]}"
+    return matches[0]
+
+
+def epidemic_warnings(at) -> list[str]:
+    """Tab 1's R0 >= 1 banner, told apart from every other warning on the page.
+
+    Asserting on `at.warning` as a whole would silently start passing (or
+    failing) the moment another tab added a warning of its own, which is
+    exactly what happened when the real-data tab arrived.
+    """
+    return [w.value for w in at.warning if "R₀" in w.value and "≥ 1" in w.value]
+
+
 def fit_table(at) -> str:
     """The rendered Wald-interval table, or ``""`` when no fit is displayed."""
     tables = [block.value for block in at.markdown if "Wald" in block.value]
@@ -116,7 +133,7 @@ def test_the_dashboard_runs_at_the_baseline(dashboard):
 
 def test_the_baseline_is_reported_as_a_self_sustaining_epidemic(dashboard):
     """R₀ = 1.21 ≥ 1, so the app must warn rather than reassure."""
-    assert dashboard.warning, "R0 >= 1 should be flagged"
+    assert epidemic_warnings(dashboard), "R0 >= 1 should be flagged"
     assert not dashboard.success
 
 
@@ -135,7 +152,7 @@ def test_a_subcritical_contact_rate_is_reported_as_elimination():
     at = run_app(beta=0.02)
     assert float(at.metric[0].value) < 1.0
     assert at.success, "R0 < 1 should be flagged as the disease-free case"
-    assert not at.warning
+    assert not epidemic_warnings(at)
 
 
 def test_the_extremes_of_every_slider_still_integrate():
@@ -251,6 +268,49 @@ def test_changing_the_scenario_discards_data_generated_under_the_old_one():
     assert not at.exception, at.exception
     assert not any("觀測點" in block.value for block in at.caption)
     assert any("尚未生成觀測資料" in block.value for block in at.info)
+
+
+# -- real data and the scale-up -------------------------------------------
+
+
+def test_the_real_data_tab_plots_the_published_series_against_the_model():
+    """The UNAIDS snapshot loads and both observables reach the page.
+
+    ``load_worldbank`` defaults to a *relative* path, so this also pins down
+    that the app resolves the CSV from its own location rather than from
+    whatever directory streamlit happened to be started in.
+    """
+    at = run_app()
+    assert metric(at, "ART 涵蓋率（模型）").value.endswith("%")
+    assert metric(at, "感染總數（模型）")
+
+
+def test_the_scaleup_toggle_changes_the_trajectory():
+    """Constant alpha and a logistic ramp must not produce the same curve."""
+    label = "ART 涵蓋率（模型）"
+    constant = metric(run_app(scaleup_on=False), label).value
+    ramped = metric(
+        run_app(
+            scaleup_on=True,
+            alpha_ceiling=0.6, alpha_midpoint=10.0, alpha_rate=0.4,
+            lam_ceiling=0.3, lam_midpoint=8.0, lam_rate=0.4,
+        ),
+        label,
+    ).value
+    assert constant != ramped, f"the scale-up made no difference: both {constant}"
+
+
+def test_a_scaleup_does_not_ask_for_a_number_r0_does_not_have():
+    """Ticking the box makes the system non-autonomous.
+
+    ``reproduction_number`` raises on a time-varying parameter set - by
+    design, since R0 is a statement about constant coefficients - so the tab
+    has to reach for ``reproduction_number_at``. Wired to the wrong one, the
+    app would raise the moment the checkbox was ticked, and this is what
+    would catch it.
+    """
+    at = run_app(scaleup_on=True)
+    assert "→" in metric(at, "R₀(t)").value
 
 
 # -- the controls themselves ----------------------------------------------

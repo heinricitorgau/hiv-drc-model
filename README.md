@@ -366,11 +366,21 @@ pip install -e ".[app]"
 streamlit run app.py
 ```
 
-Two tabs. **Dynamics** moves $\beta$, $\alpha$ and $\phi$ on sliders and recomputes $R_0$ from
-the closed form on every change, alongside its $R_1/R_2/R_3$ decomposition and the trajectory
-of $I_1$, $I_2$, $A$ and $T$. **The inverse problem** generates noisy $A$ and $T$ from the
-current parameters, recovers them with `estimate_parameters`, and shows the Wald intervals
-next to the truth the estimator was never given.
+Three tabs. **Dynamics** moves $\beta$, $\alpha$ and $\phi$ on sliders and recomputes $R_0$
+from the closed form on every change, alongside its $R_1/R_2/R_3$ decomposition and the
+trajectory of $I_1$, $I_2$, $A$ and $T$. **The inverse problem** generates noisy $A$ and $T$
+from the current parameters, recovers them with `estimate_parameters`, and shows the Wald
+intervals next to the truth the estimator was never given. **Real data and the scale-up**
+drops synthetic data entirely: it loads the UNAIDS series with `load_worldbank`, builds the
+initial state from the first year's PLHIV, ART coverage and population rather than from
+Table 2, and draws the published `plhiv` and `art_coverage` against the model.
+
+That third tab exists to be toggled. With constant rates the model reaches 34% ART coverage
+by 2024 against the published 71%, because a constant $\alpha$ cannot produce an S-curve.
+Switching on the logistic scale-up and leaving the sliders at their defaults lands coverage
+at 70.9% — and PLHIV at 0.173 million against the published 0.540. Matching one series to
+within a tenth of a point while missing the other threefold is the whole lesson of
+[Meeting real data](#meeting-real-data), reachable from a checkbox.
 
 The dashboard computes nothing itself: every number on screen comes from `DRC_2020`,
 `simulate`, `reproduction_number`, `generate_observations` and `estimate_parameters`. It is a
@@ -1003,9 +1013,9 @@ exact ratios are not.
 pytest
 ```
 
-235 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
+238 tests. The frequentist ones finish in a few seconds; the Bayesian ones run real (small)
 MCMC chains and add roughly one to three minutes depending on the machine — there is no way to
-test a sampler's convergence diagnostics without actually sampling. Thirteen of the 235 drive
+test a sampler's convergence diagnostics without actually sampling. Sixteen of the 238 drive
 the [dashboard](#interactive-dashboard) through Streamlit's own `AppTest` harness; they add
 about a minute, because a fit through the UI is a real fit. Streamlit is in both the `dev`
 and the `app` extra, so CI runs them; on an install that has neither, the module skips with a
@@ -1074,7 +1084,7 @@ hiv-drc-model/
 │   ├── bayesian.py          The same inverse problem, solved by MCMC (emcee)
 │   ├── plotting.py          Figures (no computation lives here)
 │   └── cli.py               Command-line interface
-├── tests/                   219 tests (235 with doctests)
+├── tests/                   222 tests (238 with doctests)
 │   ├── conftest.py          Shared fixtures
 │   ├── test_model.py        ODE right-hand side and Jacobian
 │   ├── test_simulation.py   Integration, conservation, solver agreement
