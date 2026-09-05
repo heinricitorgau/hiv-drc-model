@@ -36,6 +36,10 @@ example in `src/` is executed** and a stale one is a test failure; and the Bayes
 are expected to take minutes to hours. `scripts/fetch_worldbank.py` is the only code that touches
 the network.
 
+**Dependencies live in `pyproject.toml`** — runtime in `[project].dependencies`, tooling in the
+`dev` extra, streamlit in both `dev` and `app`. `requirements.txt` is a mirror kept only for
+deployment targets that install from a requirements file; add a dependency in both or they drift.
+
 ## Architecture
 
 **`parameters.py` is the configuration block.** `Parameters` is a frozen dataclass — build variants

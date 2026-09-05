@@ -1,3 +1,9 @@
+# Runtime dependencies, mirroring [project].dependencies plus the `app` extra in
+# pyproject.toml. It exists for deployment targets that install from a requirements
+# file rather than from the package (Streamlit Community Cloud reads this one).
+#
+# pyproject.toml is the source of truth - if you add a dependency there, add it here.
+# Development tooling is not duplicated: pip install -e ".[dev]".
 numpy>=1.24
 scipy>=1.10
 matplotlib>=3.7

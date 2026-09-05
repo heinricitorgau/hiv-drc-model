@@ -183,7 +183,8 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e .
 ```
 
-Or, without installing the package, just the dependencies:
+Or, without installing the package, just the dependencies (this file is a mirror of
+pyproject's, kept for deployment targets that install from a requirements file):
 
 ```bash
 pip install -r requirements.txt
@@ -1115,8 +1116,7 @@ hiv-drc-model/
 ├── figures/                 Generated output (git-ignored)
 ├── app.py                   Streamlit dashboard — presentation only, no computation
 ├── pyproject.toml
-├── requirements.txt
-├── requirements-dev.txt
+├── requirements.txt        Deploy mirror of pyproject's runtime dependencies
 └── README.md
 ```
 
